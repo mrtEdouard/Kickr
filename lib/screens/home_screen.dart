@@ -207,7 +207,7 @@ class _MatchCard extends StatelessWidget {
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
               // Fallback sombre si l'image ne charge pas
-              errorBuilder: (_, _, _) => Container(color: const Color(0xFF091A07)),
+              errorBuilder: (ctx, obj, err) => Container(color: const Color(0xFF091A07)),
               loadingBuilder: (_, child, progress) {
                 if (progress == null) return child;
                 return Container(color: const Color(0xFF0D0D16));
