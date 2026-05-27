@@ -236,15 +236,16 @@ class _MatchCard extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 4),
-                Text('0 / ${event.maxPlayers} joueurs', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                Text('${event.participantsCount} / ${event.maxPlayers} joueurs',
+                    style: const TextStyle(color: Colors.white, fontSize: 13)),
                 const SizedBox(height: 2),
                 Text(levelLabel, style: const TextStyle(color: _kGray, fontSize: 13)),
                 const SizedBox(height: 14),
                 Row(
                   children: [
-                    _AvatarStack(count: 3, extra: 0),
+                    _AvatarStack(count: event.participantsCount.clamp(0, 5), extra: 0),
                     const Spacer(),
-                    const _JoinButton(),
+                    _JoinButton(event: event),
                   ],
                 ),
               ],
@@ -399,25 +400,71 @@ class _Avatar extends StatelessWidget {
   }
 }
 
-// Bouton "Rejoindre"
-class _JoinButton extends StatelessWidget {
-  const _JoinButton();
+class _JoinButton extends StatefulWidget {
+  final Event event;
+  const _JoinButton({required this.event});
+
+  @override
+  State<_JoinButton> createState() => _JoinButtonState();
+}
+
+class _JoinButtonState extends State<_JoinButton> {
+  bool _loading = false;
+
+  Future<void> _onTap() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connecte-toi pour rejoindre un match.')),
+      );
+      return;
+    }
+
+    setState(() => _loading = true);
+    final message = await context.read<EventProvider>().joinEvent(widget.event.id);
+    if (!mounted) return;
+    setState(() => _loading = false);
+
+    if (message != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message), backgroundColor: _kLime.withValues(alpha: 0.9)),
+      );
+    } else {
+      final error = context.read<EventProvider>().error;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error ?? 'Erreur'), backgroundColor: Colors.redAccent),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      decoration: BoxDecoration(
-        color: _kLime,
-        borderRadius: BorderRadius.circular(24),
-      ),
-      child: const Text(
-        'Rejoindre',
-        style: TextStyle(
-          color: Color(0xFF0D0D16),
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-        ),
+    final joined = context.watch<EventProvider>().joinedIds.contains(widget.event.id);
+    final isFull = widget.event.status == 'full';
+    final isValidation = widget.event.joinMode == 'validation';
+
+    final label = joined
+        ? 'Inscrit ✓'
+        : isFull
+            ? 'Complet'
+            : isValidation
+                ? 'Demander'
+                : 'Rejoindre';
+
+    final color = joined ? _kGray : isFull ? const Color(0xFF2A2A3A) : _kLime;
+    final textColor = joined || isFull ? Colors.white54 : const Color(0xFF0D0D16);
+
+    return GestureDetector(
+      onTap: (joined || isFull || _loading) ? null : _onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(24)),
+        child: _loading
+            ? const SizedBox(
+                width: 16, height: 16,
+                child: CircularProgressIndicator(color: Color(0xFF0D0D16), strokeWidth: 2),
+              )
+            : Text(label, style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.w700)),
       ),
     );
   }

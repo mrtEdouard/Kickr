@@ -7,6 +7,7 @@ class Event {
   final String location;
   final String matchType;
   final int maxPlayers;
+  final int participantsCount;
   final String? requiredLevel;
   final String? description;
   final String joinMode;
@@ -22,6 +23,7 @@ class Event {
     required this.location,
     required this.matchType,
     required this.maxPlayers,
+    required this.participantsCount,
     this.requiredLevel,
     this.description,
     required this.joinMode,
@@ -38,6 +40,7 @@ class Event {
         location: json['location'] as String,
         matchType: json['match_type'] as String,
         maxPlayers: (json['max_players'] as num).toInt(),
+        participantsCount: (json['participants_count'] as num? ?? 0).toInt(),
         requiredLevel: json['required_level'] as String?,
         description: json['description'] as String?,
         joinMode: json['join_mode'] as String,

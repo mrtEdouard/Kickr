@@ -161,7 +161,9 @@ class _MainScaffoldState extends State<MainScaffold> {
               pseudo: auth.user!.pseudo,
               onProfile: () => _onTabTap(4),
               onLogout: () async {
+                final eventProvider = context.read<EventProvider>();
                 await context.read<AuthProvider>().logout();
+                eventProvider.reset();
                 setState(() => _currentIndex = 0);
               },
             )

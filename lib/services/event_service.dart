@@ -13,7 +13,6 @@ class EventException implements Exception {
 class EventService {
   static const _base = 'http://localhost:3000';
 
-  // Récupère la liste des événements publics (pas besoin d'être connecté).
   Future<List<Event>> getEvents() async {
     final response = await http
         .get(Uri.parse('$_base/events'))
@@ -24,7 +23,21 @@ class EventService {
     return list.map((e) => Event.fromJson(e as Map<String, dynamic>)).toList();
   }
 
-  // Crée un événement — nécessite d'être connecté (token JWT).
+  Future<Map<String, List<Event>>> getMyEvents() async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.get(
+      Uri.parse('$_base/events/mine'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    return {
+      'created': (body['created'] as List).map((e) => Event.fromJson(e)).toList(),
+      'joined': (body['joined'] as List).map((e) => Event.fromJson(e)).toList(),
+    };
+  }
+
   Future<Event> createEvent({
     required String title,
     required String date,
@@ -38,30 +51,36 @@ class EventService {
   }) async {
     final token = await AuthService().getToken();
     if (token == null) throw const EventException('Tu dois être connecté pour créer un événement.');
-
-    final response = await http
-        .post(
-          Uri.parse('$_base/events'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'title': title,
-            'date': date,
-            'location': location,
-            'match_type': matchType,
-            'max_players': maxPlayers,
-            'required_level': requiredLevel,
-            'description': description,
-            'join_mode': joinMode,
-            'is_public': isPublic ? 1 : 0,
-          }),
-        )
-        .timeout(const Duration(seconds: 10));
-
+    final response = await http.post(
+      Uri.parse('$_base/events'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+      body: jsonEncode({
+        'title': title,
+        'date': date,
+        'location': location,
+        'match_type': matchType,
+        'max_players': maxPlayers,
+        'required_level': requiredLevel,
+        'description': description,
+        'join_mode': joinMode,
+        'is_public': isPublic ? 1 : 0,
+      }),
+    ).timeout(const Duration(seconds: 10));
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     if (body.containsKey('error')) throw EventException(body['error'] as String);
     return Event.fromJson(body['event'] as Map<String, dynamic>);
+  }
+
+  // Retourne le message de confirmation ou lance une EventException.
+  Future<String> joinEvent(int eventId) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Tu dois être connecté pour rejoindre un match.');
+    final response = await http.post(
+      Uri.parse('$_base/events/$eventId/join'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    return body['message'] as String;
   }
 }
