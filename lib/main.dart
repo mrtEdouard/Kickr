@@ -76,9 +76,14 @@ class _MainScaffoldState extends State<MainScaffold> {
   @override
   void initState() {
     super.initState();
-    // Vérifie la session au démarrage (token en local storage → /auth/me)
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<AuthProvider>().initialize();
+    // Vérifie la session au démarrage, puis charge les events de l'utilisateur
+    // si la session est encore valide. On capture les providers avant l'await
+    // pour ne pas utiliser context dans un gap asynchrone.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final auth = context.read<AuthProvider>();
+      final events = context.read<EventProvider>();
+      await auth.initialize();
+      if (auth.isLoggedIn) events.loadMyEvents();
     });
   }
 

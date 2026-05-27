@@ -40,14 +40,15 @@ router.post('/', requireAuth, (req, res) => {
   }
 });
 
-// Lister les événements publics avec le nombre de participants
+// Lister les événements publics avec le nombre de participants et le pseudo du créateur
 router.get('/', (req, res) => {
   try {
     const db = getDb();
     const events = db.prepare(`
-      SELECT e.*, COUNT(ep.id) as participants_count
+      SELECT e.*, COUNT(ep.id) as participants_count, u.pseudo as creator_pseudo
       FROM events e
       LEFT JOIN event_participants ep ON e.id = ep.event_id AND ep.status = 'confirmed'
+      LEFT JOIN users u ON e.creator_id = u.id
       WHERE e.is_public = 1
       GROUP BY e.id
       ORDER BY e.date ASC

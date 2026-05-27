@@ -155,6 +155,20 @@ class _MatchCard extends StatelessWidget {
   final Event event;
   const _MatchCard({required this.event});
 
+  String _timeAgo(String? raw) {
+    if (raw == null) return '';
+    try {
+      final dt = DateTime.parse(raw.replaceFirst(' ', 'T'));
+      final diff = DateTime.now().difference(dt);
+      if (diff.inMinutes < 1) return "à l'instant";
+      if (diff.inMinutes < 60) return 'il y a ${diff.inMinutes} min';
+      if (diff.inHours < 24) return 'il y a ${diff.inHours} h';
+      return 'il y a ${diff.inDays} j';
+    } catch (_) {
+      return '';
+    }
+  }
+
   String _formatDate(String raw) {
     try {
       final dt = DateTime.parse(raw.replaceFirst(' ', 'T'));
@@ -240,6 +254,16 @@ class _MatchCard extends StatelessWidget {
                     style: const TextStyle(color: Colors.white, fontSize: 13)),
                 const SizedBox(height: 2),
                 Text(levelLabel, style: const TextStyle(color: _kGray, fontSize: 13)),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    const Text('⚽ ', style: TextStyle(fontSize: 12)),
+                    Text(
+                      'Créé par ${event.creatorPseudo ?? '?'}  •  ${_timeAgo(event.createdAt)}',
+                      style: const TextStyle(color: _kGray, fontSize: 12),
+                    ),
+                  ],
+                ),
                 const SizedBox(height: 14),
                 Row(
                   children: [

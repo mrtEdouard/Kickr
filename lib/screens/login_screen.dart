@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import '../providers/event_provider.dart';
 import 'register_screen.dart';
 
 const _kLime = Color(0xFFAAFF00);
@@ -32,8 +33,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     final auth = context.read<AuthProvider>();
+    final events = context.read<EventProvider>();
     final ok = await auth.login(_emailCtrl.text.trim(), _passwordCtrl.text);
-    if (ok && mounted) Navigator.of(context).pop();
+    if (ok && mounted) {
+      events.loadMyEvents();
+      Navigator.of(context).pop();
+    }
   }
 
   @override
