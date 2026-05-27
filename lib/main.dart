@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
+import 'providers/event_provider.dart';
+
 import 'screens/home_screen.dart';
 import 'screens/explore_screen.dart';
 import 'screens/create_match_screen.dart';
@@ -19,8 +21,11 @@ void main() {
     statusBarIconBrightness: Brightness.light,
   ));
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => AuthProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => AuthProvider()),
+        ChangeNotifierProvider(create: (_) => EventProvider()),
+      ],
       child: const KickrApp(),
     ),
   );

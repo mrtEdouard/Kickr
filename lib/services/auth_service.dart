@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 
+// Erreur métier renvoyée par le backend (ex: "email déjà utilisé").
+// Distincte des erreurs réseau pour pouvoir afficher le bon message à l'utilisateur.
 class AuthException implements Exception {
   final String message;
   const AuthException(this.message);
@@ -13,6 +15,9 @@ class AuthException implements Exception {
 class AuthService {
   static const _base = 'http://localhost:3000';
   static const _tokenKey = 'kickr_auth_token';
+
+  // SharedPreferences = stockage local de l'appareil (persiste entre les lancements).
+  // On y stocke le token JWT pour ne pas redemander la connexion à chaque ouverture.
 
   Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -29,6 +34,7 @@ class AuthService {
     await prefs.remove(_tokenKey);
   }
 
+  // Méthode partagée pour tous les appels POST afin d'éviter la répétition.
   Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body, {String? token}) async {
     final headers = <String, String>{'Content-Type': 'application/json'};
     if (token != null) headers['Authorization'] = 'Bearer $token';
@@ -62,6 +68,8 @@ class AuthService {
     return User.fromJson(body['user'] as Map<String, dynamic>);
   }
 
+  // Appelée au démarrage de l'app pour restaurer la session depuis le token local.
+  // Retourne null si le token est absent, expiré, ou si le backend est injoignable.
   Future<User?> getCurrentUser() async {
     final token = await getToken();
     if (token == null) return null;
@@ -86,7 +94,9 @@ class AuthService {
     if (token != null) {
       try {
         await _post('/auth/logout', {}, token: token);
-      } catch (_) {}
+      } catch (_) {
+        // Si le backend est injoignable on déconnecte quand même en local.
+      }
     }
     await clearToken();
   }

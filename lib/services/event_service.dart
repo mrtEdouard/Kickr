@@ -1,0 +1,67 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../models/event.dart';
+import 'auth_service.dart';
+
+class EventException implements Exception {
+  final String message;
+  const EventException(this.message);
+  @override
+  String toString() => message;
+}
+
+class EventService {
+  static const _base = 'http://localhost:3000';
+
+  // Récupère la liste des événements publics (pas besoin d'être connecté).
+  Future<List<Event>> getEvents() async {
+    final response = await http
+        .get(Uri.parse('$_base/events'))
+        .timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    final list = body['events'] as List<dynamic>;
+    return list.map((e) => Event.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  // Crée un événement — nécessite d'être connecté (token JWT).
+  Future<Event> createEvent({
+    required String title,
+    required String date,
+    required String location,
+    required String matchType,
+    required int maxPlayers,
+    String? requiredLevel,
+    String? description,
+    String joinMode = 'open',
+    bool isPublic = true,
+  }) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Tu dois être connecté pour créer un événement.');
+
+    final response = await http
+        .post(
+          Uri.parse('$_base/events'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'title': title,
+            'date': date,
+            'location': location,
+            'match_type': matchType,
+            'max_players': maxPlayers,
+            'required_level': requiredLevel,
+            'description': description,
+            'join_mode': joinMode,
+            'is_public': isPublic ? 1 : 0,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    return Event.fromJson(body['event'] as Map<String, dynamic>);
+  }
+}

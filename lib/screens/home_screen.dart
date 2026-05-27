@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
+import '../providers/event_provider.dart';
+import '../models/event.dart';
 
 const _kLime = Color(0xFFAAFF00);
 const _kBg = Color(0xFF0D0D16);
@@ -6,115 +10,92 @@ const _kCard = Color(0xFF141420);
 const _kGray = Color(0xFF8A8A9A);
 const _kPill = Color(0xFF1A1A2A);
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Charge les events dès que l'écran s'affiche
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<EventProvider>().loadEvents();
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final eventProvider = context.watch<EventProvider>();
+    final pseudo = auth.user?.pseudo ?? 'toi';
+
     return Scaffold(
       backgroundColor: _kBg,
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 20),
+      body: RefreshIndicator(
+        color: _kLime,
+        backgroundColor: _kCard,
+        onRefresh: () => context.read<EventProvider>().loadEvents(),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 20),
 
-            // Salutation
-            const Text(
-              'Salut Edouard 👋',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
+              Text(
+                'Salut $pseudo 👋',
+                style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800),
               ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              "Prêt pour un match aujourd'hui ?",
-              style: TextStyle(color: _kGray, fontSize: 15),
-            ),
+              const SizedBox(height: 6),
+              const Text("Prêt pour un match aujourd'hui ?", style: TextStyle(color: _kGray, fontSize: 15)),
+              const SizedBox(height: 20),
 
-            const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(child: _LocationPill()),
+                  const SizedBox(width: 10),
+                  _FilterPill(),
+                ],
+              ),
+              const SizedBox(height: 28),
 
-            // Barre localisation + filtres
-            Row(
-              children: [
-                Expanded(child: _LocationPill()),
-                const SizedBox(width: 10),
-                _FilterPill(),
-              ],
-            ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Matchs autour de toi', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+                  Text('${eventProvider.events.length} match${eventProvider.events.length > 1 ? 's' : ''}',
+                      style: const TextStyle(color: _kGray, fontSize: 14)),
+                ],
+              ),
+              const SizedBox(height: 16),
 
-            const SizedBox(height: 28),
-
-            // En-tête de section
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Matchs autour de toi',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                  ),
+              // États de chargement / erreur / liste
+              if (eventProvider.loading)
+                const Center(child: Padding(
+                  padding: EdgeInsets.all(40),
+                  child: CircularProgressIndicator(color: _kLime),
+                ))
+              else if (eventProvider.error != null)
+                _ErrorState(message: eventProvider.error!, onRetry: () => context.read<EventProvider>().loadEvents())
+              else if (eventProvider.events.isEmpty)
+                const _EmptyState()
+              else
+                ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: eventProvider.events.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 14),
+                  itemBuilder: (_, i) => _MatchCard(event: eventProvider.events[i]),
                 ),
-                GestureDetector(
-                  onTap: () {},
-                  child: const Text(
-                    'Voir tout',
-                    style: TextStyle(
-                      color: _kLime,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
 
-            const SizedBox(height: 16),
-
-            // Liste des matchs (données fictives pour la maquette)
-            _MatchCard(
-              type: '5v5',
-              date: "Aujourd'hui • 20:00",
-              distance: '1.2 km',
-              title: 'Five du soir',
-              location: 'Parc Montcalm',
-              players: 7,
-              maxPlayers: 10,
-              level: 'Niveau intermédiaire',
-              extraPlayers: 3,
-            ),
-            const SizedBox(height: 14),
-            _MatchCard(
-              type: '7v7',
-              date: 'Demain • 18:30',
-              distance: '2.4 km',
-              title: 'Match détente',
-              location: 'Stade Grammont',
-              players: 9,
-              maxPlayers: 14,
-              level: 'Niveau ouvert',
-              extraPlayers: 6,
-            ),
-            const SizedBox(height: 14),
-            _MatchCard(
-              type: '5v5',
-              date: 'Vendredi • 21:00',
-              distance: '1.8 km',
-              title: 'Foot entre potes',
-              location: 'City Sport',
-              players: 6,
-              maxPlayers: 10,
-              level: 'Niveau intermédiaire',
-              extraPlayers: 2,
-            ),
-
-            const SizedBox(height: 24),
-          ],
+              const SizedBox(height: 24),
+            ],
+          ),
         ),
       ),
     );
@@ -170,52 +151,45 @@ class _FilterPill extends StatelessWidget {
   }
 }
 
-// Carte d'un match
 class _MatchCard extends StatelessWidget {
-  final String type;
-  final String date;
-  final String distance;
-  final String title;
-  final String location;
-  final int players;
-  final int maxPlayers;
-  final String level;
-  final int extraPlayers;
+  final Event event;
+  const _MatchCard({required this.event});
 
-  const _MatchCard({
-    required this.type,
-    required this.date,
-    required this.distance,
-    required this.title,
-    required this.location,
-    required this.players,
-    required this.maxPlayers,
-    required this.level,
-    required this.extraPlayers,
-  });
+  String _formatDate(String raw) {
+    try {
+      final dt = DateTime.parse(raw.replaceFirst(' ', 'T'));
+      final months = ['jan', 'fév', 'mar', 'avr', 'mai', 'jun', 'jul', 'aoû', 'sep', 'oct', 'nov', 'déc'];
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final eventDay = DateTime(dt.year, dt.month, dt.day);
+      final diff = eventDay.difference(today).inDays;
+      final time = '${dt.hour.toString().padLeft(2, '0')}h${dt.minute.toString().padLeft(2, '0')}';
+      if (diff == 0) return "Aujourd'hui • $time";
+      if (diff == 1) return 'Demain • $time';
+      return '${dt.day} ${months[dt.month - 1]} • $time';
+    } catch (_) {
+      return raw;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final levelLabel = event.requiredLevel != null ? 'Niveau ${event.requiredLevel}' : 'Niveau ouvert';
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: Stack(
         children: [
-          // Image de stade en fond, alignée à droite pour laisser la place au texte
           Positioned.fill(
             child: Image.network(
               'https://images.unsplash.com/photo-1522778119026-d647f0596c20?w=600&q=75',
               fit: BoxFit.cover,
               alignment: Alignment.centerRight,
-              // Fallback sombre si l'image ne charge pas
-              errorBuilder: (ctx, obj, err) => Container(color: const Color(0xFF091A07)),
-              loadingBuilder: (_, child, progress) {
-                if (progress == null) return child;
-                return Container(color: const Color(0xFF0D0D16));
-              },
+              errorBuilder: (_, __, ___) => Container(color: const Color(0xFF091A07)),
+              loadingBuilder: (_, child, progress) =>
+                  progress == null ? child : Container(color: _kBg),
             ),
           ),
-
-          // Fondu de gauche à droite pour garantir la lisibilité du texte
           Positioned.fill(
             child: Container(
               decoration: const BoxDecoration(
@@ -228,70 +202,104 @@ class _MatchCard extends StatelessWidget {
               ),
             ),
           ),
-
-          // Contenu de la carte
           Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Ligne du haut : badge type, date, distance
                 Row(
                   children: [
-                    _TypeBadge(type),
+                    _TypeBadge(event.matchType),
                     const SizedBox(width: 8),
-                    Text(date, style: const TextStyle(color: _kGray, fontSize: 13)),
+                    Text(_formatDate(event.date), style: const TextStyle(color: _kGray, fontSize: 13)),
                     const Spacer(),
-                    _DistancePill(distance),
+                    if (event.joinMode == 'validation')
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
+                        ),
+                        child: const Text('Sur validation', style: TextStyle(color: Colors.orange, fontSize: 11)),
+                      ),
                   ],
                 ),
-
                 const SizedBox(height: 10),
-
-                // Titre du match
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-
+                Text(event.title, style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 6),
-
-                // Lieu
                 Row(
                   children: [
                     const Icon(Icons.location_on_rounded, size: 13, color: _kGray),
                     const SizedBox(width: 3),
-                    Text(location, style: const TextStyle(color: _kGray, fontSize: 13)),
+                    Text(event.location, style: const TextStyle(color: _kGray, fontSize: 13)),
                   ],
                 ),
-
                 const SizedBox(height: 4),
-
-                Text(
-                  '$players / $maxPlayers joueurs',
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                ),
+                Text('0 / ${event.maxPlayers} joueurs', style: const TextStyle(color: Colors.white, fontSize: 13)),
                 const SizedBox(height: 2),
-                Text(level, style: const TextStyle(color: _kGray, fontSize: 13)),
-
+                Text(levelLabel, style: const TextStyle(color: _kGray, fontSize: 13)),
                 const SizedBox(height: 14),
-
-                // Avatars joueurs + bouton rejoindre
                 Row(
                   children: [
-                    _AvatarStack(count: 5, extra: extraPlayers),
+                    _AvatarStack(count: 3, extra: 0),
                     const Spacer(),
-                    _JoinButton(),
+                    const _JoinButton(),
                   ],
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(vertical: 60),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(Icons.sports_soccer_rounded, color: _kGray, size: 48),
+            SizedBox(height: 16),
+            Text('Aucun match disponible', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+            SizedBox(height: 6),
+            Text('Sois le premier à en créer un !', style: TextStyle(color: _kGray, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+  const _ErrorState({required this.message, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 40),
+      child: Center(
+        child: Column(
+          children: [
+            const Icon(Icons.wifi_off_rounded, color: _kGray, size: 40),
+            const SizedBox(height: 12),
+            Text(message, style: const TextStyle(color: _kGray, fontSize: 14), textAlign: TextAlign.center),
+            const SizedBox(height: 16),
+            GestureDetector(
+              onTap: onRetry,
+              child: const Text('Réessayer', style: TextStyle(color: _kLime, fontWeight: FontWeight.w700)),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -322,30 +330,6 @@ class _TypeBadge extends StatelessWidget {
   }
 }
 
-// Pill de distance en haut à droite de la carte
-class _DistancePill extends StatelessWidget {
-  final String distance;
-  const _DistancePill(this.distance);
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Text(
-        distance,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
 
 // Pile d'avatars des joueurs avec un "+N" à la fin
 class _AvatarStack extends StatelessWidget {

@@ -48,10 +48,11 @@ router.post('/register', async (req, res) => {
       'INSERT INTO users (pseudo, email, password_hash) VALUES (?, ?, ?)'
     ).run(pseudo, email.toLowerCase(), passwordHash);
 
-    const token = jwt.sign({ userId: lastInsertRowid }, JWT_SECRET, { expiresIn: '7d' });
+    const userId = Number(lastInsertRowid);
+    const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
     return res.status(201).json({
       token,
-      user: { id: Number(lastInsertRowid), pseudo, email: email.toLowerCase() },
+      user: { id: userId, pseudo, email: email.toLowerCase() },
     });
   } catch (err) {
     console.error('register error:', err);
