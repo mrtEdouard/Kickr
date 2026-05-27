@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/event.dart';
+import '../models/participant.dart';
 import 'auth_service.dart';
 
 class EventException implements Exception {
@@ -82,5 +83,55 @@ class EventService {
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     if (body.containsKey('error')) throw EventException(body['error'] as String);
     return body['message'] as String;
+  }
+
+  Future<List<Participant>> getParticipants(int eventId) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.get(
+      Uri.parse('$_base/events/$eventId/participants'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    return (body['participants'] as List).map((e) => Participant.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  Future<Map<int, int>> getComposition(int eventId) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.get(
+      Uri.parse('$_base/events/$eventId/composition'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    final raw = body['composition'] as Map<String, dynamic>;
+    return raw.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
+  }
+
+  Future<void> saveComposition(int eventId, Map<int, int> assignments) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.put(
+      Uri.parse('$_base/events/$eventId/composition'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+      body: jsonEncode({'assignments': assignments.map((k, v) => MapEntry(k.toString(), v))}),
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+  }
+
+  Future<Map<int, int>> randomizeComposition(int eventId) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.post(
+      Uri.parse('$_base/events/$eventId/composition/random'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    final raw = body['composition'] as Map<String, dynamic>;
+    return raw.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
   }
 }

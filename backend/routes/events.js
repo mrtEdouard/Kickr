@@ -132,6 +132,104 @@ router.post('/:id/join', requireAuth, (req, res) => {
   }
 });
 
+// Participants confirmés d'un événement
+router.get('/:id/participants', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const participants = db.prepare(`
+      SELECT u.id, u.pseudo, u.avatar_url, u.position, u.preferred_foot, ep.status
+      FROM event_participants ep
+      JOIN users u ON ep.user_id = u.id
+      WHERE ep.event_id = ? AND ep.status = 'confirmed'
+      ORDER BY ep.joined_at ASC
+    `).all(Number(req.params.id));
+    return res.json({ participants });
+  } catch (err) {
+    console.error('get participants error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+// Composition actuelle d'un événement
+router.get('/:id/composition', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const rows = db.prepare('SELECT user_id, team FROM event_compositions WHERE event_id = ?')
+      .all(Number(req.params.id));
+    const composition = {};
+    for (const row of rows) composition[row.user_id] = row.team;
+    return res.json({ composition });
+  } catch (err) {
+    console.error('get composition error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+// Sauvegarder la composition manuelle (organisateur uniquement)
+router.put('/:id/composition', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    if (event.creator_id !== req.userId) {
+      return res.status(403).json({ error: 'Seul l\'organisateur peut modifier la composition.' });
+    }
+    const { assignments } = req.body ?? {};
+    if (!assignments || typeof assignments !== 'object') {
+      return res.status(400).json({ error: 'assignments requis.' });
+    }
+    db.prepare('DELETE FROM event_compositions WHERE event_id = ?').run(eventId);
+    const insert = db.prepare('INSERT INTO event_compositions (event_id, user_id, team) VALUES (?, ?, ?)');
+    for (const [userId, team] of Object.entries(assignments)) {
+      if (team === 1 || team === 2) insert.run(eventId, Number(userId), team);
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('save composition error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+// Composition aléatoire (organisateur uniquement)
+router.post('/:id/composition/random', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId = Number(req.params.id);
+    const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    if (event.creator_id !== req.userId) {
+      return res.status(403).json({ error: 'Seul l\'organisateur peut modifier la composition.' });
+    }
+    const participants = db.prepare(
+      "SELECT user_id FROM event_participants WHERE event_id = ? AND status = 'confirmed'"
+    ).all(eventId);
+
+    // Fisher-Yates shuffle
+    const ids = participants.map(p => p.user_id);
+    for (let i = ids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ids[i], ids[j]] = [ids[j], ids[i]];
+    }
+
+    const m = event.match_type.match(/^(\d+)v\d+$/);
+    const teamSize = m ? parseInt(m[1]) : 5;
+
+    db.prepare('DELETE FROM event_compositions WHERE event_id = ?').run(eventId);
+    const insert = db.prepare('INSERT INTO event_compositions (event_id, user_id, team) VALUES (?, ?, ?)');
+    const composition = {};
+    for (let i = 0; i < ids.length; i++) {
+      const team = i < teamSize ? 1 : 2;
+      insert.run(eventId, ids[i], team);
+      composition[ids[i]] = team;
+    }
+    return res.json({ composition });
+  } catch (err) {
+    console.error('random composition error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
 // Détail d'un événement
 router.get('/:id', (req, res) => {
   try {

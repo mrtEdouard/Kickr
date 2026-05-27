@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/event_provider.dart';
 import '../models/event.dart';
+import 'event_detail_screen.dart';
 
 const _kLime = Color(0xFFAAFF00);
 const _kBg = Color(0xFF0D0D16);
@@ -154,13 +155,18 @@ class _MyEventCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: _kCard,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kBorder),
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)),
       ),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: _kCard,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: _kBorder),
+        ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -203,6 +209,7 @@ class _MyEventCard extends StatelessWidget {
           ),
         ],
       ),
+    ),
     );
   }
 }

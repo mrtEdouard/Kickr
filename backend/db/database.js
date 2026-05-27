@@ -70,6 +70,14 @@ function initDb() {
       created_at     TEXT       NOT NULL DEFAULT (datetime('now')),
       UNIQUE(event_id, rater_id, rated_user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS event_compositions (
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      team     INTEGER NOT NULL CHECK(team IN (1, 2)),
+      UNIQUE(event_id, user_id)
+    );
   `);
   // Migration : colonne nationality absente des DBs créées avant cette version
   try { db.exec('ALTER TABLE users ADD COLUMN nationality TEXT'); } catch (_) {}
