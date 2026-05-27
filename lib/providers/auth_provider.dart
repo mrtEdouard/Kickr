@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../models/user.dart';
 import '../services/auth_service.dart';
@@ -65,6 +66,58 @@ class AuthProvider extends ChangeNotifier {
       _error = 'Impossible de contacter le serveur.';
     }
     _loading = false;
+    notifyListeners();
+    return false;
+  }
+
+  Future<bool> updateProfile({
+    required String pseudo,
+    String? firstName,
+    String? lastName,
+    String? city,
+    String? nationality,
+    String? position,
+    String? preferredFoot,
+    String? bio,
+  }) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      _user = await _service.updateProfile(
+        pseudo: pseudo,
+        firstName: firstName,
+        lastName: lastName,
+        city: city,
+        nationality: nationality,
+        position: position,
+        preferredFoot: preferredFoot,
+        bio: bio,
+      );
+      _loading = false;
+      notifyListeners();
+      return true;
+    } on AuthException catch (e) {
+      _error = e.message;
+    } catch (_) {
+      _error = 'Impossible de contacter le serveur.';
+    }
+    _loading = false;
+    notifyListeners();
+    return false;
+  }
+
+  Future<bool> updateAvatar(Uint8List bytes, String filename) async {
+    try {
+      final avatarUrl = await _service.uploadAvatar(bytes, filename);
+      _user = _user?.copyWith(avatarUrl: avatarUrl);
+      notifyListeners();
+      return true;
+    } on AuthException catch (e) {
+      _error = e.message;
+    } catch (e) {
+      _error = e.toString();
+    }
     notifyListeners();
     return false;
   }

@@ -2,6 +2,9 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 const { getDb } = require('../db/database');
 const { requireAuth } = require('../middleware/authMiddleware');
 
@@ -11,6 +14,34 @@ const SALT_ROUNDS = 12;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PSEUDO_RE = /^[a-zA-Z0-9_-]+$/;
+
+// Config upload avatar
+const UPLOAD_DIR = path.join(__dirname, '..', 'uploads', 'avatars');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: UPLOAD_DIR,
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname) || '.jpg';
+      cb(null, `${req.userId}_${Date.now()}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_, file, cb) => {
+    const ok = file.mimetype.startsWith('image/') ||
+               /\.(jpe?g|png|gif|webp|bmp)$/i.test(file.originalname);
+    cb(null, ok);
+  },
+});
+
+function fullUser(db, userId) {
+  return db.prepare(`
+    SELECT id, pseudo, email, first_name, last_name, avatar_url, city, nationality,
+           position, preferred_foot, bio, matches_played, average_rating, presence_rate
+    FROM users WHERE id = ?
+  `).get(userId);
+}
 
 // POST /auth/register
 router.post('/register', async (req, res) => {
@@ -50,10 +81,7 @@ router.post('/register', async (req, res) => {
 
     const userId = Number(lastInsertRowid);
     const token = jwt.sign({ userId }, JWT_SECRET, { expiresIn: '7d' });
-    return res.status(201).json({
-      token,
-      user: { id: userId, pseudo, email: email.toLowerCase() },
-    });
+    return res.status(201).json({ token, user: fullUser(db, userId) });
   } catch (err) {
     console.error('register error:', err);
     return res.status(500).json({ error: 'Une erreur est survenue. Réessayez.' });
@@ -70,21 +98,16 @@ router.post('/login', async (req, res) => {
   try {
     const db = getDb();
     const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
-    if (!user) {
-      return res.status(401).json({ error: 'Identifiants incorrects.' });
-    }
+    if (!user) return res.status(401).json({ error: 'Identifiants incorrects.' });
+
     const match = await bcrypt.compare(password, user.password_hash);
-    if (!match) {
-      return res.status(401).json({ error: 'Identifiants incorrects.' });
-    }
+    if (!match) return res.status(401).json({ error: 'Identifiants incorrects.' });
+
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
-    return res.json({
-      token,
-      user: { id: user.id, pseudo: user.pseudo, email: user.email },
-    });
+    return res.json({ token, user: fullUser(db, user.id) });
   } catch (err) {
     console.error('login error:', err);
-    return res.status(500).json({ error: 'Une erreur est survenue. Réessayez.' });
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
   }
 });
 
@@ -92,8 +115,7 @@ router.post('/login', async (req, res) => {
 router.get('/me', requireAuth, (req, res) => {
   try {
     const db = getDb();
-    const user = db.prepare('SELECT id, pseudo, email, created_at FROM users WHERE id = ?')
-      .get(req.userId);
+    const user = fullUser(db, req.userId);
     if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
     return res.json({ user });
   } catch (err) {
@@ -102,7 +124,64 @@ router.get('/me', requireAuth, (req, res) => {
   }
 });
 
-// POST /auth/logout 
+// PATCH /auth/profile
+router.patch('/profile', requireAuth, (req, res) => {
+  const { pseudo, first_name, last_name, city, nationality, position, preferred_foot, bio } = req.body ?? {};
+
+  try {
+    const db = getDb();
+
+    if (pseudo) {
+      if (typeof pseudo !== 'string' || pseudo.length < 3 || pseudo.length > 30) {
+        return res.status(400).json({ error: 'Le pseudo doit contenir entre 3 et 30 caractères.' });
+      }
+      if (!PSEUDO_RE.test(pseudo)) {
+        return res.status(400).json({ error: 'Le pseudo ne peut contenir que des lettres, chiffres, _ et -.' });
+      }
+      const taken = db.prepare('SELECT id FROM users WHERE pseudo = ? AND id != ?').get(pseudo, req.userId);
+      if (taken) return res.status(409).json({ error: 'Ce pseudo est déjà utilisé.' });
+    }
+
+    db.prepare(`
+      UPDATE users SET
+        pseudo         = COALESCE(?, pseudo),
+        first_name     = ?,
+        last_name      = ?,
+        city           = ?,
+        nationality    = ?,
+        position       = ?,
+        preferred_foot = ?,
+        bio            = ?
+      WHERE id = ?
+    `).run(
+      pseudo || null,
+      first_name || null,
+      last_name || null,
+      city || null,
+      nationality || null,
+      position || null,
+      preferred_foot || null,
+      bio || null,
+      req.userId,
+    );
+
+    return res.json({ user: fullUser(db, req.userId) });
+  } catch (err) {
+    console.error('profile update error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+// POST /auth/avatar
+router.post('/avatar', requireAuth, upload.single('avatar'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Aucun fichier envoyé.' });
+  const avatarUrl = `/uploads/avatars/${req.file.filename}`;
+  const db = getDb();
+  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, req.userId);
+  return res.json({ avatar_url: avatarUrl });
+});
+
+// POST /auth/logout
 router.post('/logout', requireAuth, (req, res) => {
   return res.json({ message: 'Déconnexion réussie.' });
 });

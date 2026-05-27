@@ -463,23 +463,31 @@ class _JoinButtonState extends State<_JoinButton> {
 
   @override
   Widget build(BuildContext context) {
+    final currentUserId = context.watch<AuthProvider>().user?.id;
+    final isOrganizer = currentUserId == widget.event.creatorId;
     final joined = context.watch<EventProvider>().joinedIds.contains(widget.event.id);
     final isFull = widget.event.status == 'full';
     final isValidation = widget.event.joinMode == 'validation';
 
-    final label = joined
-        ? 'Inscrit ✓'
-        : isFull
-            ? 'Complet'
-            : isValidation
-                ? 'Demander'
-                : 'Rejoindre';
+    final label = isOrganizer
+        ? 'Organisateur'
+        : joined
+            ? 'Inscrit ✓'
+            : isFull
+                ? 'Complet'
+                : isValidation
+                    ? 'Demander'
+                    : 'Rejoindre';
 
-    final color = joined ? _kGray : isFull ? const Color(0xFF2A2A3A) : _kLime;
-    final textColor = joined || isFull ? Colors.white54 : const Color(0xFF0D0D16);
+    final color = isOrganizer || isFull
+        ? const Color(0xFF2A2A3A)
+        : joined
+            ? _kGray
+            : _kLime;
+    final textColor = isOrganizer || joined || isFull ? Colors.white54 : const Color(0xFF0D0D16);
 
     return GestureDetector(
-      onTap: (joined || isFull || _loading) ? null : _onTap,
+      onTap: (isOrganizer || joined || isFull || _loading) ? null : _onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
         decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(24)),

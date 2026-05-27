@@ -164,6 +164,7 @@ class _MainScaffoldState extends State<MainScaffold> {
           if (auth.isLoggedIn)
             _ProfileMenu(
               pseudo: auth.user!.pseudo,
+              avatarUrl: auth.user!.avatarUrl,
               onProfile: () => _onTabTap(4),
               onLogout: () async {
                 final eventProvider = context.read<EventProvider>();
@@ -198,11 +199,13 @@ class _MainScaffoldState extends State<MainScaffold> {
 // Avatar + pseudo + menu déroulant (Profil / Déconnecter)
 class _ProfileMenu extends StatelessWidget {
   final String pseudo;
+  final String? avatarUrl;
   final VoidCallback onProfile;
   final VoidCallback onLogout;
 
   const _ProfileMenu({
     required this.pseudo,
+    this.avatarUrl,
     required this.onProfile,
     required this.onLogout,
   });
@@ -257,16 +260,35 @@ class _ProfileMenu extends StatelessWidget {
                 border: Border.all(color: const Color(0xFFAAFF00), width: 2),
                 color: const Color(0xFF1E1E2E),
               ),
-              child: Center(
-                child: Text(
-                  pseudo.substring(0, 1).toUpperCase(),
-                  style: const TextStyle(
-                    color: Color(0xFFAAFF00),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
+              child: avatarUrl != null
+                  ? ClipOval(
+                      child: Image.network(
+                        'http://localhost:3000$avatarUrl',
+                        fit: BoxFit.cover,
+                        width: 36,
+                        height: 36,
+                        errorBuilder: (_, __, ___) => Center(
+                          child: Text(
+                            pseudo.substring(0, 1).toUpperCase(),
+                            style: const TextStyle(
+                              color: Color(0xFFAAFF00),
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                      ),
+                    )
+                  : Center(
+                      child: Text(
+                        pseudo.substring(0, 1).toUpperCase(),
+                        style: const TextStyle(
+                          color: Color(0xFFAAFF00),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
             ),
             const SizedBox(width: 8),
             Text(

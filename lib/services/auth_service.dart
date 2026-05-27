@@ -1,10 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/user.dart';
 
-// Erreur métier renvoyée par le backend (ex: "email déjà utilisé").
-// Distincte des erreurs réseau pour pouvoir afficher le bon message à l'utilisateur.
 class AuthException implements Exception {
   final String message;
   const AuthException(this.message);
@@ -15,9 +14,6 @@ class AuthException implements Exception {
 class AuthService {
   static const _base = 'http://localhost:3000';
   static const _tokenKey = 'kickr_auth_token';
-
-  // SharedPreferences = stockage local de l'appareil (persiste entre les lancements).
-  // On y stocke le token JWT pour ne pas redemander la connexion à chaque ouverture.
 
   Future<String?> getToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -34,7 +30,6 @@ class AuthService {
     await prefs.remove(_tokenKey);
   }
 
-  // Méthode partagée pour tous les appels POST afin d'éviter la répétition.
   Future<Map<String, dynamic>> _post(String path, Map<String, dynamic> body, {String? token}) async {
     final headers = <String, String>{'Content-Type': 'application/json'};
     if (token != null) headers['Authorization'] = 'Bearer $token';
@@ -68,8 +63,6 @@ class AuthService {
     return User.fromJson(body['user'] as Map<String, dynamic>);
   }
 
-  // Appelée au démarrage de l'app pour restaurer la session depuis le token local.
-  // Retourne null si le token est absent, expiré, ou si le backend est injoignable.
   Future<User?> getCurrentUser() async {
     final token = await getToken();
     if (token == null) return null;
@@ -89,14 +82,58 @@ class AuthService {
     }
   }
 
+  Future<User> updateProfile({
+    required String pseudo,
+    String? firstName,
+    String? lastName,
+    String? city,
+    String? nationality,
+    String? position,
+    String? preferredFoot,
+    String? bio,
+  }) async {
+    final token = await getToken();
+    final response = await http
+        .patch(
+          Uri.parse('$_base/auth/profile'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({
+            'pseudo': pseudo,
+            'first_name': firstName,
+            'last_name': lastName,
+            'city': city,
+            'nationality': nationality,
+            'position': position,
+            'preferred_foot': preferredFoot,
+            'bio': bio,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw AuthException(body['error'] as String);
+    return User.fromJson(body['user'] as Map<String, dynamic>);
+  }
+
+  Future<String> uploadAvatar(Uint8List bytes, String filename) async {
+    final token = await getToken();
+    final request = http.MultipartRequest('POST', Uri.parse('$_base/auth/avatar'));
+    request.headers['Authorization'] = 'Bearer $token';
+    request.files.add(http.MultipartFile.fromBytes('avatar', bytes, filename: filename));
+    final streamed = await request.send().timeout(const Duration(seconds: 30));
+    final body = jsonDecode(await streamed.stream.bytesToString()) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw AuthException(body['error'] as String);
+    return body['avatar_url'] as String;
+  }
+
   Future<void> logout() async {
     final token = await getToken();
     if (token != null) {
       try {
         await _post('/auth/logout', {}, token: token);
-      } catch (_) {
-        // Si le backend est injoignable on déconnecte quand même en local.
-      }
+      } catch (_) {}
     }
     await clearToken();
   }

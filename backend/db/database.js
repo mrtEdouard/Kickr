@@ -22,6 +22,7 @@ function initDb() {
       level          TEXT,    -- 'beginner' | 'intermediate' | 'confirmed'
       preferred_foot TEXT,    -- 'left' | 'right' | 'both'
       bio            TEXT,
+      nationality    TEXT,
       -- Stats (mises à jour après chaque match)
       matches_played INTEGER NOT NULL DEFAULT 0,
       average_rating REAL    NOT NULL DEFAULT 0,
@@ -70,6 +71,9 @@ function initDb() {
       UNIQUE(event_id, rater_id, rated_user_id)
     );
   `);
+  // Migration : colonne nationality absente des DBs créées avant cette version
+  try { db.exec('ALTER TABLE users ADD COLUMN nationality TEXT'); } catch (_) {}
+
   console.log('Database initialized at', DB_PATH);
 }
 

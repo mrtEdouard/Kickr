@@ -49,7 +49,7 @@ router.get('/', (req, res) => {
       FROM events e
       LEFT JOIN event_participants ep ON e.id = ep.event_id AND ep.status = 'confirmed'
       LEFT JOIN users u ON e.creator_id = u.id
-      WHERE e.is_public = 1
+      WHERE e.is_public = 1 AND e.date >= datetime('now')
       GROUP BY e.id
       ORDER BY e.date ASC
     `).all();
