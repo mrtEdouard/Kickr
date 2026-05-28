@@ -193,10 +193,15 @@ class _MatchCard extends StatelessWidget {
     final levelLabel = event.requiredLevel != null ? 'Niveau ${event.requiredLevel}' : 'Niveau ouvert';
 
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)),
-      ),
+      onTap: () {
+        if (!context.read<AuthProvider>().isLoggedIn) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Connecte-toi pour voir les détails du match.')),
+          );
+          return;
+        }
+        Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)));
+      },
       child: ClipRRect(
       borderRadius: BorderRadius.circular(16),
       child: Stack(
