@@ -128,7 +128,9 @@ class EventProvider extends ChangeNotifier {
           'id': e.id, 'title': e.title, 'type': e.type,
           'creator_id': e.creatorId, 'date': e.date, 'location': e.location,
           'match_type': e.matchType, 'max_players': e.maxPlayers,
-          'participants_count': e.participantsCount + 1,
+          // Seul un join en mode 'open' crée un participant confirmé côté serveur.
+          // En mode 'validation' le statut est 'pending' → ne compte pas dans les places.
+          'participants_count': e.joinMode == 'open' ? e.participantsCount + 1 : e.participantsCount,
           'required_level': e.requiredLevel, 'description': e.description,
           'join_mode': e.joinMode, 'is_public': e.isPublic ? 1 : 0,
           'status': e.status,

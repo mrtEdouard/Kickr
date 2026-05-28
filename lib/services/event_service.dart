@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/event.dart';
 import '../models/participant.dart';
+import '../models/pending_request.dart';
 import 'auth_service.dart';
 
 /// Exception métier levée lors d'une erreur retournée par l'API événements.
@@ -172,6 +173,50 @@ class EventService {
     if (body.containsKey('error')) throw EventException(body['error'] as String);
     final raw = body['composition'] as Map<String, dynamic>;
     return raw.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
+  }
+
+  /// Retire un participant confirmé de l'événement.
+  /// Endpoint : DELETE /events/:id/participants/:userId (token JWT requis, organisateur uniquement).
+  Future<void> removeParticipant(int eventId, int userId) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.delete(
+      Uri.parse('$_base/events/$eventId/participants/$userId'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+  }
+
+  /// Retourne les demandes de participation en attente avec le profil du demandeur.
+  /// Endpoint : GET /events/:id/requests (token JWT requis, organisateur uniquement).
+  Future<List<PendingRequest>> getPendingRequests(int eventId) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.get(
+      Uri.parse('$_base/events/$eventId/requests'),
+      headers: {'Authorization': 'Bearer $token'},
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    return (body['requests'] as List)
+        .map((e) => PendingRequest.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Accepte ou refuse une demande de participation.
+  /// [action] : 'accept' ou 'reject'.
+  /// Endpoint : PATCH /events/:id/requests/:userId (token JWT requis, organisateur uniquement).
+  Future<void> respondToRequest(int eventId, int userId, String action) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final response = await http.patch(
+      Uri.parse('$_base/events/$eventId/requests/$userId'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
+      body: jsonEncode({'action': action}),
+    ).timeout(const Duration(seconds: 10));
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
   }
 
   /// Upload ou remplace la photo de couverture de l'événement.

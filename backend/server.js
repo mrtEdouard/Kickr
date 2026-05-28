@@ -2,8 +2,9 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const authRoutes = require('./routes/auth');
+const authRoutes   = require('./routes/auth');
 const eventsRoutes = require('./routes/events');
+const notifRoutes  = require('./routes/notifications');
 const { initDb } = require('./db/database');
 
 const app = express();
@@ -20,6 +21,7 @@ initDb();
 
 app.use('/auth', authRoutes);
 app.use('/events', eventsRoutes);
+app.use('/notifications', notifRoutes);
 
 
 app.listen(PORT, () => {

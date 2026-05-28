@@ -5,6 +5,7 @@ const path    = require('path');
 const fs      = require('fs');
 const { getDb } = require('../db/database');
 const { requireAuth } = require('../middleware/authMiddleware');
+const { createNotification } = require('../utils/notifications');
 
 const uploadsDir = path.join(__dirname, '..', 'uploads', 'events');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -137,6 +138,19 @@ router.post('/:id/join', requireAuth, (req, res) => {
       db.prepare("UPDATE events SET status = 'full' WHERE id = ?").run(eventId);
     }
 
+    const joiner = db.prepare('SELECT pseudo FROM users WHERE id = ?').get(req.userId);
+    if (status === 'pending') {
+      createNotification(db, event.creator_id, 'join_request',
+        'Demande de participation',
+        `${joiner.pseudo} souhaite rejoindre "${event.title}"`,
+        { event_id: eventId, event_title: event.title, requester_id: req.userId });
+    } else {
+      createNotification(db, event.creator_id, 'new_participant',
+        'Nouveau participant',
+        `${joiner.pseudo} a rejoint "${event.title}"`,
+        { event_id: eventId, event_title: event.title });
+    }
+
     const message = status === 'pending'
       ? 'Demande envoyée, en attente de validation.'
       : 'Tu as rejoint le match !';
@@ -220,8 +234,17 @@ router.put('/:id/composition', requireAuth, (req, res) => {
     db.prepare('DELETE FROM event_compositions WHERE event_id = ?').run(eventId);
     const insert = db.prepare('INSERT INTO event_compositions (event_id, user_id, team) VALUES (?, ?, ?)');
     for (const [userId, team] of Object.entries(assignments)) {
-      // On n'insère que les valeurs valides (1 ou 2) pour respecter la contrainte CHECK
       if (team === 1 || team === 2) insert.run(eventId, Number(userId), team);
+    }
+    // Notifie les participants (hors organisateur) que la compo a changé
+    const participants = db.prepare(
+      "SELECT user_id FROM event_participants WHERE event_id = ? AND status = 'confirmed' AND user_id != ?"
+    ).all(eventId, req.userId);
+    for (const p of participants) {
+      createNotification(db, p.user_id, 'composition_updated',
+        'Composition mise à jour',
+        `L'organisateur a défini les équipes pour "${event.title}"`,
+        { event_id: eventId, event_title: event.title });
     }
     return res.json({ ok: true });
   } catch (err) {
@@ -272,7 +295,16 @@ router.post('/:id/composition/random', requireAuth, (req, res) => {
     for (let i = 0; i < ids.length; i++) {
       const team = i < teamSize ? 1 : 2;
       insert.run(eventId, ids[i], team);
-      composition[ids[i]] = team; // construit la réponse au fur et à mesure
+      composition[ids[i]] = team;
+    }
+    // Notifie les participants (hors organisateur) du tirage au sort
+    for (const id of ids) {
+      if (id !== req.userId) {
+        createNotification(db, id, 'composition_updated',
+          'Équipes tirées au sort 🎲',
+          `Les équipes ont été mélangées pour "${event.title}"`,
+          { event_id: eventId, event_title: event.title });
+      }
     }
     return res.json({ composition });
   } catch (err) {
@@ -306,6 +338,132 @@ router.post('/:id/image', requireAuth, upload.single('image'), (req, res) => {
     return res.json({ image_url: imageUrl });
   } catch (err) {
     console.error('upload event image error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+/**
+ * DELETE /events/:id/participants/:userId
+ * Retire un participant confirmé de l'événement (organisateur uniquement).
+ * Remet le statut de l'événement à 'open' s'il était 'full'.
+ */
+router.delete('/:id/participants/:userId', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId      = Number(req.params.id);
+    const targetUserId = Number(req.params.userId);
+
+    const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    if (event.creator_id !== req.userId) return res.status(403).json({ error: 'Non autorisé.' });
+    if (event.creator_id === targetUserId) return res.status(400).json({ error: 'Impossible de retirer l\'organisateur.' });
+
+    const participant = db.prepare(
+      "SELECT id FROM event_participants WHERE event_id = ? AND user_id = ? AND status = 'confirmed'"
+    ).get(eventId, targetUserId);
+    if (!participant) return res.status(404).json({ error: 'Participant introuvable.' });
+
+    db.prepare('DELETE FROM event_participants WHERE event_id = ? AND user_id = ?').run(eventId, targetUserId);
+    db.prepare('DELETE FROM event_compositions WHERE event_id = ? AND user_id = ?').run(eventId, targetUserId);
+
+    // Remet l'événement à 'open' si il était complet
+    if (event.status === 'full') {
+      db.prepare("UPDATE events SET status = 'open' WHERE id = ?").run(eventId);
+    }
+
+    createNotification(db, targetUserId, 'kicked',
+      'Retiré de l\'événement',
+      `Tu as été retiré de "${event.title}" par l'organisateur.`,
+      { event_id: eventId, event_title: event.title });
+
+    return res.json({ message: 'Participant retiré.' });
+  } catch (err) {
+    console.error('remove participant error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+/**
+ * GET /events/:id/requests
+ * Retourne les demandes de participation en attente avec le profil complet du demandeur.
+ * Réservé à l'organisateur.
+ */
+router.get('/:id/requests', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId = Number(req.params.id);
+    const event = db.prepare('SELECT creator_id FROM events WHERE id = ?').get(eventId);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    if (event.creator_id !== req.userId) return res.status(403).json({ error: 'Non autorisé.' });
+
+    const requests = db.prepare(`
+      SELECT u.id as user_id, u.pseudo, u.avatar_url, u.position, u.preferred_foot,
+             u.level, u.city, u.bio, u.matches_played, u.average_rating, u.presence_rate,
+             ep.joined_at
+      FROM event_participants ep
+      JOIN users u ON ep.user_id = u.id
+      WHERE ep.event_id = ? AND ep.status = 'pending'
+      ORDER BY ep.joined_at ASC
+    `).all(eventId);
+    return res.json({ requests });
+  } catch (err) {
+    console.error('get requests error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+/**
+ * PATCH /events/:id/requests/:userId
+ * Accepte ou refuse une demande de participation.
+ * Corps attendu : { action: 'accept' | 'reject' }
+ * Réservé à l'organisateur.
+ */
+router.patch('/:id/requests/:userId', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId      = Number(req.params.id);
+    const targetUserId = Number(req.params.userId);
+    const { action }   = req.body ?? {};
+
+    if (!['accept', 'reject'].includes(action)) {
+      return res.status(400).json({ error: 'Action invalide.' });
+    }
+    const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    if (event.creator_id !== req.userId) return res.status(403).json({ error: 'Non autorisé.' });
+
+    const pending = db.prepare(
+      "SELECT id FROM event_participants WHERE event_id = ? AND user_id = ? AND status = 'pending'"
+    ).get(eventId, targetUserId);
+    if (!pending) return res.status(404).json({ error: 'Demande introuvable.' });
+
+    if (action === 'accept') {
+      const { count } = db.prepare(
+        "SELECT COUNT(*) as count FROM event_participants WHERE event_id = ? AND status = 'confirmed'"
+      ).get(eventId);
+      if (count >= event.max_players) return res.status(400).json({ error: 'Le match est complet.' });
+
+      db.prepare("UPDATE event_participants SET status = 'confirmed' WHERE event_id = ? AND user_id = ?")
+        .run(eventId, targetUserId);
+      if (count + 1 >= event.max_players) {
+        db.prepare("UPDATE events SET status = 'full' WHERE id = ?").run(eventId);
+      }
+      createNotification(db, targetUserId, 'request_accepted',
+        'Demande acceptée ✓',
+        `Tu as été accepté dans "${event.title}" !`,
+        { event_id: eventId, event_title: event.title });
+      return res.json({ message: 'Demande acceptée.' });
+    } else {
+      db.prepare("UPDATE event_participants SET status = 'refused' WHERE event_id = ? AND user_id = ?")
+        .run(eventId, targetUserId);
+      createNotification(db, targetUserId, 'request_refused',
+        'Demande refusée',
+        `Ta demande pour "${event.title}" n'a pas été acceptée.`,
+        { event_id: eventId, event_title: event.title });
+      return res.json({ message: 'Demande refusée.' });
+    }
+  } catch (err) {
+    console.error('respond request error:', err);
     return res.status(500).json({ error: 'Une erreur est survenue.' });
   }
 });

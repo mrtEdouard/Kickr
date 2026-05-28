@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../models/event.dart';
 import '../models/participant.dart';
+import '../models/pending_request.dart';
 import '../services/event_service.dart';
 
 // ─── Palette de couleurs partagée dans cet écran ─────────────────────────────
@@ -35,9 +36,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   List<Participant> _participants = []; // liste des joueurs confirmés
   Map<int, int> _composition = {};     // composition sauvegardée : userId → équipe (1 ou 2)
   Map<int, int> _draft = {};           // brouillon en cours d'édition (non encore sauvegardé)
-  bool _loading = true;  // chargement initial des données
-  bool _saving  = false; // sauvegarde ou randomisation en cours
-  bool _editMode = false; // mode édition manuelle de la composition
+  bool _loading = true;
+  bool _saving  = false;
+  bool _editMode = false;
+  List<PendingRequest> _pendingRequests = [];
 
   @override
   void initState() {
@@ -45,23 +47,113 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     _load(); // chargement des participants et de la composition au démarrage
   }
 
-  /// Charge en parallèle les participants confirmés et la composition actuelle.
-  /// Utilise [Future.wait] pour optimiser les deux appels réseau simultanés.
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final results = await Future.wait([
+      final isOrg = context.read<AuthProvider>().user?.id == widget.event.creatorId;
+      final futures = <Future>[
         _service.getParticipants(widget.event.id),
         _service.getComposition(widget.event.id),
-      ]);
+        if (isOrg && widget.event.joinMode == 'validation')
+          _service.getPendingRequests(widget.event.id),
+      ];
+      final results = await Future.wait(futures);
       setState(() {
-        _participants = results[0] as List<Participant>;
-        _composition  = results[1] as Map<int, int>;
+        _participants     = results[0] as List<Participant>;
+        _composition      = results[1] as Map<int, int>;
+        _pendingRequests  = results.length > 2 ? results[2] as List<PendingRequest> : [];
         _loading = false;
       });
     } catch (_) {
       setState(() => _loading = false);
     }
+  }
+
+  Future<void> _respondToRequest(int userId, String action) async {
+    try {
+      await _service.respondToRequest(widget.event.id, userId, action);
+      setState(() => _pendingRequests.removeWhere((r) => r.userId == userId));
+      if (action == 'accept') {
+        final updated = await _service.getParticipants(widget.event.id);
+        if (mounted) setState(() => _participants = updated);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(action == 'accept' ? 'Demande acceptée ✓' : 'Demande refusée.'),
+          backgroundColor: action == 'accept' ? _kLime.withValues(alpha: 0.9) : Colors.redAccent,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
+  }
+
+  void _confirmRemove(Participant p) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _kCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Retirer le joueur', style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+        content: Text(
+          'Retirer ${p.pseudo} de l\'événement ? Sa place sera libérée.',
+          style: const TextStyle(color: _kGray, fontSize: 14),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Annuler', style: TextStyle(color: _kGray)),
+          ),
+          TextButton(
+            onPressed: () { Navigator.pop(context); _removeParticipant(p); },
+            child: const Text('Retirer', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _removeParticipant(Participant p) async {
+    try {
+      await _service.removeParticipant(widget.event.id, p.id);
+      setState(() {
+        _participants.removeWhere((x) => x.id == p.id);
+        _composition.remove(p.id);
+        _draft.remove(p.id);
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${p.pseudo} a été retiré du match.'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
+  }
+
+  void _showRequestProfile(PendingRequest req) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _kCard,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _RequestProfileSheet(
+        request: req,
+        onAccept: () { Navigator.pop(context); _respondToRequest(req.userId, 'accept'); },
+        onReject: () { Navigator.pop(context); _respondToRequest(req.userId, 'reject'); },
+      ),
+    );
   }
 
   /// Déduit la taille d'une équipe depuis le match_type (ex: '7v7' → 7).
@@ -200,12 +292,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     // Carte récapitulative des infos du match
-                    _EventHeader(event: widget.event),
+                    _EventHeader(event: widget.event, participantsCount: _participants.length),
                     const SizedBox(height: 16),
 
                     // Compte à rebours jusqu'à la date du match
                     _Countdown(dateRaw: widget.event.date),
                     const SizedBox(height: 24),
+
+                    // Demandes en attente — visible uniquement par l'organisateur
+                    if (isOrganizer && widget.event.joinMode == 'validation') ...[
+                      _PendingSection(
+                        requests: _pendingRequests,
+                        onTap: _showRequestProfile,
+                      ),
+                      const SizedBox(height: 24),
+                    ],
 
                     // En-tête de section "Composition" + boutons organisateur
                     Row(
@@ -239,6 +340,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             teamSize: _teamSize,
                             editMode: _editMode,
                             onTap: _editMode ? _showAssignSheet : null,
+                            onRemove: isOrganizer && !_editMode ? _confirmRemove : null,
                           ),
                         ),
                         const SizedBox(width: 12),
@@ -249,6 +351,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                             teamSize: _teamSize,
                             editMode: _editMode,
                             onTap: _editMode ? _showAssignSheet : null,
+                            onRemove: isOrganizer && !_editMode ? _confirmRemove : null,
                           ),
                         ),
                       ],
@@ -429,7 +532,8 @@ class _Divider extends StatelessWidget {
 /// statut, date formatée, lieu, nombre de joueurs, organisateur et description.
 class _EventHeader extends StatelessWidget {
   final Event event;
-  const _EventHeader({required this.event});
+  final int participantsCount;
+  const _EventHeader({required this.event, required this.participantsCount});
 
   /// Formate la date brute SQLite en texte lisible.
   /// Cas spéciaux : "Aujourd'hui" et "Demain" pour les deux prochains jours.
@@ -515,7 +619,7 @@ class _EventHeader extends StatelessWidget {
             children: [
               const Icon(Icons.group_rounded, size: 14, color: _kGray),
               const SizedBox(width: 4),
-              Text('${event.participantsCount} / ${event.maxPlayers} joueurs',
+              Text('$participantsCount / ${event.maxPlayers} joueurs',
                   style: const TextStyle(color: _kGray, fontSize: 13)),
             ],
           ),
@@ -660,7 +764,8 @@ class _TeamColumn extends StatelessWidget {
   final List<Participant> players; // joueurs déjà assignés à cette équipe
   final int teamSize;            // nombre de joueurs attendus par équipe
   final bool editMode;
-  final void Function(Participant)? onTap; // null si pas en mode édition
+  final void Function(Participant)? onTap;
+  final void Function(Participant)? onRemove;
 
   const _TeamColumn({
     required this.teamNum,
@@ -668,6 +773,7 @@ class _TeamColumn extends StatelessWidget {
     required this.teamSize,
     required this.editMode,
     this.onTap,
+    this.onRemove,
   });
 
   Color get _color => teamNum == 1 ? _kTeam1 : _kTeam2;
@@ -705,6 +811,7 @@ class _TeamColumn extends StatelessWidget {
                 participant: p,
                 editMode: editMode,
                 onTap: onTap != null ? () => onTap!(p) : null,
+                onRemove: onRemove != null ? () => onRemove!(p) : null,
               )),
           // Slots libres jusqu'à la capacité maximale de l'équipe
           ...List.generate(emptySlots, (_) => _EmptySlot(color: _color)),
@@ -723,8 +830,9 @@ class _PlayerTile extends StatelessWidget {
   final Participant participant;
   final bool editMode;
   final VoidCallback? onTap;
+  final VoidCallback? onRemove;
 
-  const _PlayerTile({required this.participant, required this.editMode, this.onTap});
+  const _PlayerTile({required this.participant, required this.editMode, this.onTap, this.onRemove});
 
   /// Convertit la valeur technique du poste en libellé français.
   String _posLabel(String p) {
@@ -762,7 +870,13 @@ class _PlayerTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (editMode) const Icon(Icons.swap_horiz_rounded, size: 14, color: _kGray),
+            if (editMode)
+              const Icon(Icons.swap_horiz_rounded, size: 14, color: _kGray)
+            else if (onRemove != null)
+              GestureDetector(
+                onTap: onRemove,
+                child: const Icon(Icons.person_remove_rounded, size: 15, color: Colors.redAccent),
+              ),
           ],
         ),
       ),
@@ -1007,4 +1121,296 @@ class _ChatPlaceholder extends StatelessWidget {
       ),
     );
   }
+}
+
+// ─── Demandes en attente ──────────────────────────────────────────────────────
+
+class _PendingSection extends StatelessWidget {
+  final List<PendingRequest> requests;
+  final void Function(PendingRequest) onTap;
+  const _PendingSection({required this.requests, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text('Demandes en attente',
+                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 10),
+            if (requests.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.18),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange.withValues(alpha: 0.5)),
+                ),
+                child: Text('${requests.length}',
+                    style: const TextStyle(color: Colors.orange, fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (requests.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: _kCard,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: _kBorder),
+            ),
+            child: const Text('Aucune demande en attente.',
+                style: TextStyle(color: _kGray, fontSize: 14)),
+          )
+        else
+          for (final req in requests)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: GestureDetector(
+                onTap: () => onTap(req),
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: _kCard,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      // Avatar
+                      Container(
+                        width: 46, height: 46,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFF2A2A3A),
+                          border: Border.all(color: _kBorder),
+                        ),
+                        child: req.avatarUrl != null
+                            ? ClipOval(child: Image.network(
+                                '$_base${req.avatarUrl}', fit: BoxFit.cover,
+                                errorBuilder: (_, __, ___) => _ReqInitial(req.pseudo)))
+                            : _ReqInitial(req.pseudo),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(req.pseudo,
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+                            const SizedBox(height: 3),
+                            Text(
+                              [
+                                if (req.position != null) _posLabel(req.position),
+                                if (req.city != null) req.city!,
+                              ].join(' · '),
+                              style: const TextStyle(color: _kGray, fontSize: 12),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
+                        ),
+                        child: const Text('Voir le profil',
+                            style: TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+      ],
+    );
+  }
+
+  static String _posLabel(String? p) => switch (p) {
+    'goalkeeper' => 'Gardien',
+    'defender'   => 'Défenseur',
+    'midfielder' => 'Milieu',
+    'forward'    => 'Attaquant',
+    _            => 'Joueur',
+  };
+}
+
+// ─── Bottom sheet profil du demandeur ────────────────────────────────────────
+
+class _RequestProfileSheet extends StatelessWidget {
+  final PendingRequest request;
+  final VoidCallback onAccept;
+  final VoidCallback onReject;
+  const _RequestProfileSheet({required this.request, required this.onAccept, required this.onReject});
+
+  String _posLabel(String? p) => switch (p) {
+    'goalkeeper' => 'Gardien',  'defender' => 'Défenseur',
+    'midfielder' => 'Milieu',   'forward'  => 'Attaquant',
+    _ => 'Tous postes',
+  };
+  String _footLabel(String? f) => switch (f) {
+    'left' => 'Gauche', 'right' => 'Droite', 'both' => 'Les deux', _ => '—',
+  };
+  String _levelLabel(String? l) => switch (l) {
+    'beginner' => 'Débutant', 'intermediate' => 'Intermédiaire', 'confirmed' => 'Confirmé', _ => '—',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(24, 20, 24,
+          24 + MediaQuery.of(context).viewInsets.bottom),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 40, height: 4,
+              decoration: BoxDecoration(color: _kBorder, borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 24),
+
+          // Avatar + nom + ville
+          Row(children: [
+            Container(
+              width: 64, height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle, color: const Color(0xFF2A2A3A),
+                border: Border.all(color: _kLime, width: 2),
+              ),
+              child: request.avatarUrl != null
+                  ? ClipOval(child: Image.network('$_base${request.avatarUrl}', fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _ReqInitial(request.pseudo, size: 24)))
+                  : _ReqInitial(request.pseudo, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(request.pseudo,
+                    style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w800)),
+                if (request.city != null)
+                  Row(children: [
+                    const Icon(Icons.location_on_rounded, size: 13, color: _kGray),
+                    const SizedBox(width: 3),
+                    Text(request.city!, style: const TextStyle(color: _kGray, fontSize: 13)),
+                  ]),
+              ],
+            )),
+          ]),
+          const SizedBox(height: 20),
+
+          // Stats : matchs / note / présence
+          Row(children: [
+            _Stat('${request.matchesPlayed}', 'matchs'),
+            const SizedBox(width: 10),
+            _Stat(request.averageRating > 0 ? request.averageRating.toStringAsFixed(1) : '—', 'note moy.'),
+            const SizedBox(width: 10),
+            _Stat('${request.presenceRate.toInt()}%', 'présence'),
+          ]),
+          const SizedBox(height: 16),
+
+          // Détails profil
+          _Detail(Icons.sports_soccer_rounded, 'Poste',  _posLabel(request.position)),
+          const SizedBox(height: 8),
+          _Detail(Icons.swap_horiz_rounded,    'Pied',   _footLabel(request.preferredFoot)),
+          const SizedBox(height: 8),
+          _Detail(Icons.bar_chart_rounded,     'Niveau', _levelLabel(request.level)),
+
+          if ((request.bio ?? '').isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Divider(color: _kBorder),
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(request.bio!,
+                  style: const TextStyle(color: _kGray, fontSize: 13, height: 1.5)),
+            ),
+          ],
+
+          const SizedBox(height: 24),
+
+          // Boutons Refuser / Accepter
+          Row(children: [
+            Expanded(child: GestureDetector(
+              onTap: onReject,
+              child: Container(
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.redAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: Colors.redAccent.withValues(alpha: 0.5)),
+                ),
+                child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.close_rounded, color: Colors.redAccent, size: 18),
+                  SizedBox(width: 6),
+                  Text('Refuser', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            )),
+            const SizedBox(width: 12),
+            Expanded(child: GestureDetector(
+              onTap: onAccept,
+              child: Container(
+                height: 52,
+                decoration: BoxDecoration(color: _kLime, borderRadius: BorderRadius.circular(14)),
+                child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(Icons.check_rounded, color: _kBg, size: 18),
+                  SizedBox(width: 6),
+                  Text('Accepter', style: TextStyle(color: _kBg, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            )),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReqInitial extends StatelessWidget {
+  final String pseudo;
+  final double size;
+  const _ReqInitial(this.pseudo, {this.size = 18});
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Text(pseudo.substring(0, 1).toUpperCase(),
+        style: TextStyle(color: _kLime, fontSize: size, fontWeight: FontWeight.w800)),
+  );
+}
+
+class _Stat extends StatelessWidget {
+  final String value;
+  final String label;
+  const _Stat(this.value, this.label);
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(color: const Color(0xFF1A1A2A), borderRadius: BorderRadius.circular(12)),
+      child: Column(children: [
+        Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 18)),
+        const SizedBox(height: 2),
+        Text(label, style: const TextStyle(color: _kGray, fontSize: 11)),
+      ]),
+    ),
+  );
+}
+
+class _Detail extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _Detail(this.icon, this.label, this.value);
+  @override
+  Widget build(BuildContext context) => Row(children: [
+    Icon(icon, size: 16, color: _kGray),
+    const SizedBox(width: 10),
+    Text(label, style: const TextStyle(color: _kGray, fontSize: 13)),
+    const Spacer(),
+    Text(value, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+  ]);
 }

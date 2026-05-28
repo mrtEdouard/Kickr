@@ -52,6 +52,48 @@ class _EventPreviewScreenState extends State<EventPreviewScreen> {
     }
   }
 
+  Future<void> _confirmRemove(Participant p) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: _kCard,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Retirer le joueur',
+            style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
+        content: Text('Retirer ${p.pseudo} de l\'événement ? Sa place sera libérée.',
+            style: const TextStyle(color: _kGray, fontSize: 14)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Annuler', style: TextStyle(color: _kGray)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Retirer',
+                style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w700)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !mounted) return;
+    try {
+      await EventService().removeParticipant(widget.event.id, p.id);
+      setState(() => _participants?.removeWhere((x) => x.id == p.id));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('${p.pseudo} a été retiré du match.'),
+          backgroundColor: Colors.redAccent,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(e.toString()), backgroundColor: Colors.redAccent),
+        );
+      }
+    }
+  }
+
   Future<void> _join() async {
     setState(() => _joiningLoading = true);
     final message = await context.read<EventProvider>().joinEvent(widget.event.id);
@@ -158,7 +200,10 @@ class _EventPreviewScreenState extends State<EventPreviewScreen> {
                   const SizedBox(height: 14),
 
                   // Barre de joueurs
-                  _PlayersCard(event: widget.event),
+                  _PlayersCard(
+                    event: widget.event,
+                    liveCount: _participants?.length,
+                  ),
 
                   // Description
                   if ((widget.event.description ?? '').isNotEmpty) ...[
@@ -173,6 +218,8 @@ class _EventPreviewScreenState extends State<EventPreviewScreen> {
                     participants: _participants,
                     loading: _loadingParticipants,
                     totalSlots: widget.event.maxPlayers,
+                    organizerId: widget.event.creatorId,
+                    onRemove: _isOrganizer ? _confirmRemove : null,
                   ),
                 ],
               ),
@@ -454,14 +501,16 @@ class _Divider extends StatelessWidget {
 
 class _PlayersCard extends StatelessWidget {
   final Event event;
-  const _PlayersCard({required this.event});
+  final int? liveCount;
+  const _PlayersCard({required this.event, this.liveCount});
 
   @override
   Widget build(BuildContext context) {
+    final count     = liveCount ?? event.participantsCount;
     final ratio = event.maxPlayers > 0
-        ? (event.participantsCount / event.maxPlayers).clamp(0.0, 1.0)
+        ? (count / event.maxPlayers).clamp(0.0, 1.0)
         : 0.0;
-    final remaining = event.maxPlayers - event.participantsCount;
+    final remaining = event.maxPlayers - count;
     final barColor  = ratio >= 1.0 ? Colors.redAccent : _kLime;
 
     return Container(
@@ -481,7 +530,7 @@ class _PlayersCard extends StatelessWidget {
                 text: TextSpan(
                   children: [
                     TextSpan(
-                      text: '${event.participantsCount}',
+                      text: '$count',
                       style: TextStyle(color: barColor, fontWeight: FontWeight.w800, fontSize: 18),
                     ),
                     TextSpan(
@@ -562,11 +611,15 @@ class _ParticipantsCard extends StatelessWidget {
   final List<Participant>? participants;
   final bool loading;
   final int totalSlots;
+  final int organizerId;
+  final void Function(Participant)? onRemove;
   const _ParticipantsCard({
     required this.isLoggedIn,
     required this.participants,
     required this.loading,
     required this.totalSlots,
+    required this.organizerId,
+    this.onRemove,
   });
 
   String _posLabel(String? p) => switch (p) {
@@ -638,6 +691,9 @@ class _ParticipantsCard extends StatelessWidget {
                   participant: p,
                   posLabel: _posLabel(p.position),
                   footLabel: _footLabel(p.preferredFoot),
+                  onRemove: (onRemove != null && p.id != organizerId)
+                      ? () => onRemove!(p)
+                      : null,
                 ),
             for (int i = (participants?.length ?? 0); i < totalSlots; i++)
               _EmptySlot(i + 1),
@@ -652,7 +708,8 @@ class _ParticipantRow extends StatelessWidget {
   final Participant participant;
   final String posLabel;
   final String footLabel;
-  const _ParticipantRow({required this.participant, required this.posLabel, required this.footLabel});
+  final VoidCallback? onRemove;
+  const _ParticipantRow({required this.participant, required this.posLabel, required this.footLabel, this.onRemove});
 
   @override
   Widget build(BuildContext context) {
@@ -701,6 +758,11 @@ class _ParticipantRow extends StatelessWidget {
                 border: Border.all(color: Colors.orange.withValues(alpha: 0.4)),
               ),
               child: const Text('En attente', style: TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.w600)),
+            )
+          else if (onRemove != null)
+            GestureDetector(
+              onTap: onRemove,
+              child: const Icon(Icons.person_remove_rounded, size: 18, color: Colors.redAccent),
             ),
         ],
       ),

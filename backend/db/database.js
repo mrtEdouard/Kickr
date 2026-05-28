@@ -79,8 +79,21 @@ function initDb() {
       UNIQUE(event_id, user_id)
     );
   `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      type       TEXT    NOT NULL,
+      title      TEXT    NOT NULL,
+      body       TEXT    NOT NULL,
+      data       TEXT    NOT NULL DEFAULT '{}',
+      is_read    INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, is_read);
+  `);
+
   try { db.exec('ALTER TABLE users ADD COLUMN nationality TEXT'); } catch (_) {}
-  // Migration : photo de couverture de l'événement
   try { db.exec('ALTER TABLE events ADD COLUMN image_url TEXT'); } catch (_) {}
 
   console.log('Database initialized at', DB_PATH);

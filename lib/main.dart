@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'providers/auth_provider.dart';
 import 'providers/event_provider.dart';
+import 'providers/notification_provider.dart';
 
 import 'screens/home_screen.dart';
 import 'screens/explore_screen.dart';
@@ -15,6 +16,7 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/splash_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'screens/notifications_screen.dart';
 import 'widgets/bottom_navbar.dart';
 
 // Instance globale partagée entre le Provider et le GoRouter (refreshListenable)
@@ -35,6 +37,7 @@ Future<void> main() async {
       providers: [
         ChangeNotifierProvider.value(value: _authProvider),
         ChangeNotifierProvider(create: (_) => EventProvider()),
+        ChangeNotifierProvider(create: (_) => NotificationProvider()),
       ],
       child: const KickrApp(),
     ),
@@ -223,7 +226,10 @@ class _MainScaffoldState extends State<MainScaffold> {
       // SplashScreen a déjà tout initialisé — on ne refait rien si c'est le cas
       if (auth.status == AuthStatus.unknown) {
         await auth.initialize();
-        if (auth.isLoggedIn) await events.loadMyEvents();
+        if (auth.isLoggedIn) {
+          await events.loadMyEvents();
+          if (mounted) context.read<NotificationProvider>().start();
+        }
       }
     });
   }
@@ -281,26 +287,38 @@ class _MainScaffoldState extends State<MainScaffold> {
             icon: const Icon(Icons.info_outline_rounded, color: Color(0xFF8A8A9A), size: 20),
             tooltip: "Revoir l'introduction",
           ),
-          Stack(
+          Consumer<NotificationProvider>(
+            builder: (context, notifProvider, _) => Stack(
             children: [
               IconButton(
-                onPressed: () {},
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                ).then((_) => notifProvider.refresh()),
                 icon: const Icon(Icons.notifications_outlined, color: Colors.white, size: 26),
               ),
+              if (notifProvider.unreadCount > 0)
               Positioned(
-                top: 10,
-                right: 10,
+                top: 8,
+                right: 8,
                 child: Container(
-                  width: 9,
-                  height: 9,
+                  width: 16,
+                  height: 16,
                   decoration: const BoxDecoration(
-                    color: Color(0xFFAAFF00),
+                    color: Colors.redAccent,
                     shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Text(
+                      notifProvider.unreadCount > 9 ? '9+' : '${notifProvider.unreadCount}',
+                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w800),
+                    ),
                   ),
                 ),
               ),
             ],
-          ),
+          ),        // Stack
+          ),        // Consumer
           if (auth.isLoggedIn)
             _ProfileMenu(
               pseudo: auth.user!.pseudo,
@@ -308,6 +326,7 @@ class _MainScaffoldState extends State<MainScaffold> {
               onProfile: () => _onTabTap(4),
               onLogout: () async {
                 final eventProvider = context.read<EventProvider>();
+                context.read<NotificationProvider>().stop();
                 await context.read<AuthProvider>().logout();
                 eventProvider.reset();
                 setState(() => _currentIndex = 0);
