@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../providers/auth_provider.dart';
 import '../providers/event_provider.dart';
 import '../models/event.dart';
 import 'event_detail_screen.dart';
@@ -25,7 +26,9 @@ class _MyMatchesScreenState extends State<MyMatchesScreen> with SingleTickerProv
     super.initState();
     _tabs = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<EventProvider>().loadMyEvents();
+      if (context.read<AuthProvider>().isLoggedIn) {
+        context.read<EventProvider>().loadMyEvents();
+      }
     });
   }
 

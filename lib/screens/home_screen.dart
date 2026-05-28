@@ -22,9 +22,10 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // Charge les events dès que l'écran s'affiche
+    // Recharge uniquement si les events ne sont pas encore chargés (ex: premier lancement sans splash)
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context.read<EventProvider>().loadEvents();
+      final ep = context.read<EventProvider>();
+      if (ep.status != EventStatus.loaded) ep.loadEvents();
     });
   }
 

@@ -132,7 +132,13 @@ router.post('/:id/join', requireAuth, (req, res) => {
   }
 });
 
-// Participants confirmés d'un événement
+/**
+ * GET /events/:id/participants
+ * Retourne la liste des participants confirmés d'un événement,
+ * avec leurs informations de profil (pseudo, avatar, poste, pied préféré).
+ * Les participants sont triés par date d'inscription croissante.
+ * Authentification requise (token JWT).
+ */
 router.get('/:id/participants', requireAuth, (req, res) => {
   try {
     const db = getDb();
@@ -150,12 +156,20 @@ router.get('/:id/participants', requireAuth, (req, res) => {
   }
 });
 
-// Composition actuelle d'un événement
+/**
+ * GET /events/:id/composition
+ * Retourne la composition actuelle de l'événement sous la forme :
+ * { composition: { "userId": equipe, ... } }
+ * où equipe vaut 1 (Équipe 1) ou 2 (Équipe 2).
+ * Les clés sont des strings car JSON ne supporte pas les clés entières.
+ * Authentification requise (token JWT).
+ */
 router.get('/:id/composition', requireAuth, (req, res) => {
   try {
     const db = getDb();
     const rows = db.prepare('SELECT user_id, team FROM event_compositions WHERE event_id = ?')
       .all(Number(req.params.id));
+    // Conversion tableau → objet { userId: equipe }
     const composition = {};
     for (const row of rows) composition[row.user_id] = row.team;
     return res.json({ composition });
@@ -165,13 +179,21 @@ router.get('/:id/composition', requireAuth, (req, res) => {
   }
 });
 
-// Sauvegarder la composition manuelle (organisateur uniquement)
+/**
+ * PUT /events/:id/composition
+ * Sauvegarde la composition manuelle définie par l'organisateur.
+ * Corps attendu : { assignments: { "userId": equipe, ... } }
+ * Stratégie : suppression complète puis réinsertion (plus simple qu'un UPSERT
+ * quand tous les assignments sont envoyés d'un coup).
+ * Réservé à l'organisateur — retourne 403 sinon.
+ */
 router.put('/:id/composition', requireAuth, (req, res) => {
   try {
     const db = getDb();
     const eventId = Number(req.params.id);
     const event = db.prepare('SELECT * FROM events WHERE id = ?').get(eventId);
     if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    // Seul l'organisateur peut modifier la composition
     if (event.creator_id !== req.userId) {
       return res.status(403).json({ error: 'Seul l\'organisateur peut modifier la composition.' });
     }
@@ -179,9 +201,11 @@ router.put('/:id/composition', requireAuth, (req, res) => {
     if (!assignments || typeof assignments !== 'object') {
       return res.status(400).json({ error: 'assignments requis.' });
     }
+    // Suppression de l'ancienne composition avant réinsertion
     db.prepare('DELETE FROM event_compositions WHERE event_id = ?').run(eventId);
     const insert = db.prepare('INSERT INTO event_compositions (event_id, user_id, team) VALUES (?, ?, ?)');
     for (const [userId, team] of Object.entries(assignments)) {
+      // On n'insère que les valeurs valides (1 ou 2) pour respecter la contrainte CHECK
       if (team === 1 || team === 2) insert.run(eventId, Number(userId), team);
     }
     return res.json({ ok: true });
@@ -191,7 +215,15 @@ router.put('/:id/composition', requireAuth, (req, res) => {
   }
 });
 
-// Composition aléatoire (organisateur uniquement)
+/**
+ * POST /events/:id/composition/random
+ * Génère une composition aléatoire en répartissant les participants confirmés
+ * en deux équipes équilibrées selon la taille déduite du match_type.
+ * Exemple : '7v7' → teamSize = 7 → joueurs 0..6 → Équipe 1, joueurs 7..13 → Équipe 2.
+ * Algorithme : Fisher-Yates shuffle sur le tableau des user_id.
+ * Retourne la nouvelle composition : { composition: { "userId": equipe, ... } }
+ * Réservé à l'organisateur — retourne 403 sinon.
+ */
 router.post('/:id/composition/random', requireAuth, (req, res) => {
   try {
     const db = getDb();
@@ -201,27 +233,31 @@ router.post('/:id/composition/random', requireAuth, (req, res) => {
     if (event.creator_id !== req.userId) {
       return res.status(403).json({ error: 'Seul l\'organisateur peut modifier la composition.' });
     }
+
+    // Récupération des participants confirmés
     const participants = db.prepare(
       "SELECT user_id FROM event_participants WHERE event_id = ? AND status = 'confirmed'"
     ).all(eventId);
 
-    // Fisher-Yates shuffle
+    // Fisher-Yates shuffle : mélange aléatoire impartial du tableau
     const ids = participants.map(p => p.user_id);
     for (let i = ids.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [ids[i], ids[j]] = [ids[j], ids[i]];
     }
 
+    // Extraction de la taille d'équipe depuis le match_type (ex: '5v5' → 5)
     const m = event.match_type.match(/^(\d+)v\d+$/);
     const teamSize = m ? parseInt(m[1]) : 5;
 
+    // Réinsertion avec assignation : les teamSize premiers → équipe 1, le reste → équipe 2
     db.prepare('DELETE FROM event_compositions WHERE event_id = ?').run(eventId);
     const insert = db.prepare('INSERT INTO event_compositions (event_id, user_id, team) VALUES (?, ?, ?)');
     const composition = {};
     for (let i = 0; i < ids.length; i++) {
       const team = i < teamSize ? 1 : 2;
       insert.run(eventId, ids[i], team);
-      composition[ids[i]] = team;
+      composition[ids[i]] = team; // construit la réponse au fur et à mesure
     }
     return res.json({ composition });
   } catch (err) {

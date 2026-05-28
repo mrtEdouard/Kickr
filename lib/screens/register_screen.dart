@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/event_provider.dart';
-import 'login_screen.dart';
 
 const _kLime = Color(0xFFAAFF00);
 const _kBg = Color(0xFF0D0D16);
@@ -47,7 +47,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
     if (ok && mounted) {
       events.loadMyEvents();
-      Navigator.of(context).pop();
+      context.go('/');
     }
   }
 
@@ -63,7 +63,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         scrolledUnderElevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios_rounded, color: Colors.white),
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () => context.pop(),
         ),
       ),
       body: SafeArea(
@@ -202,9 +202,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     GestureDetector(
                       onTap: () {
                         context.read<AuthProvider>().clearError();
-                        Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(builder: (_) => const LoginScreen()),
-                        );
+                        context.go('/login');
                       },
                       child: const Text(
                         'Se connecter',

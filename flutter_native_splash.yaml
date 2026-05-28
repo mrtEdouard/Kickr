@@ -1,0 +1,22 @@
+flutter_native_splash:
+  # Couleur de fond identique au fond de l'app
+  color: "#0D0D16"
+  color_dark: "#0D0D16"
+
+  # Logo centré au lancement
+  image: logo.png
+  image_dark: logo.png
+
+  # Cibles
+  android: true
+  ios: true
+  web: false
+
+  # Android 12+ — fullscreen immersive
+  android_12:
+    color: "#0D0D16"
+    color_dark: "#0D0D16"
+    image: logo.png
+    image_dark: logo.png
+    icon_background_color: "#0D0D16"
+    icon_background_color_dark: "#0D0D16"

@@ -45,6 +45,7 @@ class EventProvider extends ChangeNotifier {
     try {
       _events = await _service.getEvents();
       _status = EventStatus.loaded;
+      _error = null; // efface toute erreur résiduelle d'une opération concurrente
     } on EventException catch (e) {
       _error = e.message;
       _status = EventStatus.error;

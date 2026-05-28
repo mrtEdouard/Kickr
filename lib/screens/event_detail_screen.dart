@@ -6,16 +6,21 @@ import '../models/event.dart';
 import '../models/participant.dart';
 import '../services/event_service.dart';
 
-const _kLime = Color(0xFFAAFF00);
-const _kBg = Color(0xFF0D0D16);
-const _kCard = Color(0xFF141420);
-const _kGray = Color(0xFF8A8A9A);
-const _kBorder = Color(0xFF2A2A3A);
-const _kTeam1 = Color(0xFF3B82F6);
-const _kTeam2 = Color(0xFFF97316);
-const _base = 'http://localhost:3000';
+// ─── Palette de couleurs partagée dans cet écran ─────────────────────────────
+const _kLime   = Color(0xFFAAFF00); // couleur d'accent principale
+const _kBg     = Color(0xFF0D0D16); // fond général
+const _kCard   = Color(0xFF141420); // fond des cartes
+const _kGray   = Color(0xFF8A8A9A); // textes secondaires
+const _kBorder = Color(0xFF2A2A3A); // bordures
+const _kTeam1  = Color(0xFF3B82F6); // couleur Équipe 1 (bleu)
+const _kTeam2  = Color(0xFFF97316); // couleur Équipe 2 (orange)
+const _base    = 'http://localhost:3000'; // URL de base de l'API
 
+/// Écran de détail d'un événement.
+/// Affiche : informations du match, countdown, composition des équipes et placeholder chat.
+/// L'organisateur dispose de contrôles supplémentaires (tirage au sort, édition manuelle).
 class EventDetailScreen extends StatefulWidget {
+  /// L'événement à afficher, passé depuis la carte cliquée (HomeScreen ou MyMatchesScreen).
   final Event event;
   const EventDetailScreen({super.key, required this.event});
 
@@ -25,19 +30,23 @@ class EventDetailScreen extends StatefulWidget {
 
 class _EventDetailScreenState extends State<EventDetailScreen> {
   final _service = EventService();
-  List<Participant> _participants = [];
-  Map<int, int> _composition = {};
-  Map<int, int> _draft = {};
-  bool _loading = true;
-  bool _saving = false;
-  bool _editMode = false;
+
+  // ─── État de l'écran ───────────────────────────────────────────────────────
+  List<Participant> _participants = []; // liste des joueurs confirmés
+  Map<int, int> _composition = {};     // composition sauvegardée : userId → équipe (1 ou 2)
+  Map<int, int> _draft = {};           // brouillon en cours d'édition (non encore sauvegardé)
+  bool _loading = true;  // chargement initial des données
+  bool _saving  = false; // sauvegarde ou randomisation en cours
+  bool _editMode = false; // mode édition manuelle de la composition
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _load(); // chargement des participants et de la composition au démarrage
   }
 
+  /// Charge en parallèle les participants confirmés et la composition actuelle.
+  /// Utilise [Future.wait] pour optimiser les deux appels réseau simultanés.
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
@@ -47,7 +56,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       ]);
       setState(() {
         _participants = results[0] as List<Participant>;
-        _composition = results[1] as Map<int, int>;
+        _composition  = results[1] as Map<int, int>;
         _loading = false;
       });
     } catch (_) {
@@ -55,11 +64,15 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
+  /// Déduit la taille d'une équipe depuis le match_type (ex: '7v7' → 7).
+  /// Valeur de repli : 5 si le format ne correspond pas à l'expression régulière.
   int get _teamSize {
     final m = RegExp(r'^(\d+)v\d+$').firstMatch(widget.event.matchType);
     return m != null ? int.parse(m.group(1)!) : 5;
   }
 
+  /// Déclenche le tirage au sort côté serveur.
+  /// Met à jour [_composition] avec le résultat et synchronise [_draft].
   Future<void> _randomize() async {
     setState(() => _saving = true);
     try {
@@ -79,6 +92,8 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
+  /// Sauvegarde le brouillon [_draft] en base via l'API,
+  /// puis le promouvoit en composition officielle et quitte le mode édition.
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
@@ -86,7 +101,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       setState(() {
         _composition = Map.from(_draft);
         _editMode = false;
-        _saving = false;
+        _saving  = false;
       });
     } catch (e) {
       setState(() => _saving = false);
@@ -98,16 +113,21 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
     }
   }
 
+  /// Entre en mode édition : copie la composition actuelle dans [_draft]
+  /// pour que les modifications n'affectent pas la vue sauvegardée avant validation.
   void _enterEdit() => setState(() {
-        _draft = Map.from(_composition);
+        _draft    = Map.from(_composition);
         _editMode = true;
       });
 
+  /// Annule le mode édition sans sauvegarder ; vide [_draft].
   void _cancelEdit() => setState(() {
         _editMode = false;
-        _draft = {};
+        _draft    = {};
       });
 
+  /// Affiche le bottom sheet d'assignation d'équipe pour le joueur [p].
+  /// En mode édition, lit depuis [_draft] ; sinon depuis [_composition].
   void _showAssignSheet(Participant p) {
     final currentTeam = (_editMode ? _draft : _composition)[p.id];
     showModalBottomSheet(
@@ -122,9 +142,9 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
         onAssign: (team) {
           setState(() {
             if (team == null) {
-              _draft.remove(p.id);
+              _draft.remove(p.id); // retirer le joueur de toute équipe
             } else {
-              _draft[p.id] = team;
+              _draft[p.id] = team; // assigner à l'équipe 1 ou 2
             }
           });
           Navigator.pop(context);
@@ -136,11 +156,14 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final currentUserId = context.read<AuthProvider>().user?.id;
+    // L'utilisateur est organisateur si son id correspond au créateur de l'événement
     final isOrganizer = currentUserId == widget.event.creatorId;
+    // En mode édition on affiche le brouillon, sinon la composition sauvegardée
     final active = _editMode ? _draft : _composition;
 
-    final team1 = _participants.where((p) => active[p.id] == 1).toList();
-    final team2 = _participants.where((p) => active[p.id] == 2).toList();
+    // Répartition des joueurs selon leur assignation dans la composition active
+    final team1      = _participants.where((p) =>  active[p.id] == 1).toList();
+    final team2      = _participants.where((p) =>  active[p.id] == 2).toList();
     final unassigned = _participants.where((p) => !active.containsKey(p.id)).toList();
 
     return Scaffold(
@@ -154,6 +177,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
             style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             overflow: TextOverflow.ellipsis),
         actions: [
+          // Badge du type de match (5v5, 7v7, 11v11) en haut à droite
           Container(
             margin: const EdgeInsets.only(right: 16),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -168,24 +192,29 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
           : RefreshIndicator(
               color: _kLime,
               backgroundColor: _kCard,
-              onRefresh: _load,
+              onRefresh: _load, // pull-to-refresh recharge participants + composition
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Carte récapitulative des infos du match
                     _EventHeader(event: widget.event),
                     const SizedBox(height: 16),
+
+                    // Compte à rebours jusqu'à la date du match
                     _Countdown(dateRaw: widget.event.date),
                     const SizedBox(height: 24),
 
+                    // En-tête de section "Composition" + boutons organisateur
                     Row(
                       children: [
                         const Text('Composition',
                             style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
                         if (isOrganizer) ...[
                           const Spacer(),
+                          // Boutons visibles uniquement pour l'organisateur
                           _OrganizerControls(
                             editMode: _editMode,
                             saving: _saving,
@@ -199,6 +228,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ),
                     const SizedBox(height: 12),
 
+                    // Deux colonnes côte à côte : Équipe 1 et Équipe 2
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
@@ -224,6 +254,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                       ],
                     ),
 
+                    // Section des joueurs non encore assignés à une équipe
                     if (unassigned.isNotEmpty) ...[
                       const SizedBox(height: 16),
                       Text(
@@ -231,6 +262,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                         style: const TextStyle(color: _kGray, fontSize: 13, fontWeight: FontWeight.w600),
                       ),
                       const SizedBox(height: 8),
+                      // Affichage en chips cliquables en mode édition
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
@@ -245,6 +277,7 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ],
 
                     const SizedBox(height: 24),
+                    // Section chat (fonctionnalité à développer ultérieurement)
                     _ChatPlaceholder(),
                     const SizedBox(height: 24),
                   ],
@@ -257,7 +290,11 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
 
 // ─── Countdown ───────────────────────────────────────────────────────────────
 
+/// Widget affichant un compte à rebours en temps réel jusqu'à la date du match.
+/// Se met à jour toutes les secondes via [Timer.periodic].
+/// Affiche "Match en cours ou terminé" si la date est dépassée.
 class _Countdown extends StatefulWidget {
+  /// Date brute de l'événement au format 'YYYY-MM-DD HH:MM:SS' (format SQLite).
   final String dateRaw;
   const _Countdown({required this.dateRaw});
 
@@ -273,22 +310,26 @@ class _CountdownState extends State<_Countdown> {
   @override
   void initState() {
     super.initState();
-    _update();
+    _update(); // calcul immédiat pour éviter un affichage vide au premier rendu
+    // Mise à jour toutes les secondes
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _update());
   }
 
   @override
   void dispose() {
-    _timer.cancel();
+    _timer.cancel(); // annulation obligatoire pour éviter les fuites mémoire
     super.dispose();
   }
 
+  /// Recalcule la durée restante entre maintenant et la date cible.
+  /// Le format SQLite ('YYYY-MM-DD HH:MM:SS') est converti en ISO 8601
+  /// en remplaçant l'espace par 'T' pour que [DateTime.tryParse] le reconnaisse.
   void _update() {
     final target = DateTime.tryParse(widget.dateRaw.replaceFirst(' ', 'T'));
     if (target == null) return;
     final diff = target.difference(DateTime.now());
     setState(() {
-      _isPast = diff.isNegative;
+      _isPast    = diff.isNegative;
       _remaining = diff.isNegative ? Duration.zero : diff;
     });
   }
@@ -311,9 +352,10 @@ class _CountdownState extends State<_Countdown> {
       );
     }
 
-    final months = _remaining.inDays ~/ 30;
-    final days = _remaining.inDays % 30;
-    final hours = _remaining.inHours % 24;
+    // Décomposition de la durée totale en unités d'affichage
+    final months  = _remaining.inDays ~/ 30;
+    final days    = _remaining.inDays % 30;
+    final hours   = _remaining.inHours % 24;
     final minutes = _remaining.inMinutes % 60;
     final seconds = _remaining.inSeconds % 60;
 
@@ -327,11 +369,11 @@ class _CountdownState extends State<_Countdown> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _CountUnit(value: months, label: 'MOIS'),
+          _CountUnit(value: months,  label: 'MOIS'),
           _Divider(),
-          _CountUnit(value: days, label: 'JOURS'),
+          _CountUnit(value: days,    label: 'JOURS'),
           _Divider(),
-          _CountUnit(value: hours, label: 'HEURES'),
+          _CountUnit(value: hours,   label: 'HEURES'),
           _Divider(),
           _CountUnit(value: minutes, label: 'MIN'),
           _Divider(),
@@ -342,6 +384,9 @@ class _CountdownState extends State<_Countdown> {
   }
 }
 
+/// Une unité du countdown : valeur numérique + label (ex: "07 / JOURS").
+/// [tabularFigures] maintient une largeur fixe pour chaque chiffre,
+/// évitant que les éléments bougent latéralement à chaque mise à jour.
 class _CountUnit extends StatelessWidget {
   final int value;
   final String label;
@@ -363,12 +408,14 @@ class _CountUnit extends StatelessWidget {
         ),
         const SizedBox(height: 3),
         Text(label,
-            style: const TextStyle(color: _kGray, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
+            style: const TextStyle(
+                color: _kGray, fontSize: 9, fontWeight: FontWeight.w600, letterSpacing: 0.8)),
       ],
     );
   }
 }
 
+/// Séparateur visuel ':' entre les unités du countdown.
 class _Divider extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -378,43 +425,49 @@ class _Divider extends StatelessWidget {
 
 // ─── Event header ───────────────────────────────────────────────────────────
 
+/// Carte récapitulative des informations principales de l'événement :
+/// statut, date formatée, lieu, nombre de joueurs, organisateur et description.
 class _EventHeader extends StatelessWidget {
   final Event event;
   const _EventHeader({required this.event});
 
+  /// Formate la date brute SQLite en texte lisible.
+  /// Cas spéciaux : "Aujourd'hui" et "Demain" pour les deux prochains jours.
   String _formatDate(String raw) {
     try {
       final dt = DateTime.parse(raw.replaceFirst(' ', 'T'));
       final months = ['jan', 'fév', 'mar', 'avr', 'mai', 'jun', 'jul', 'aoû', 'sep', 'oct', 'nov', 'déc'];
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
+      final now      = DateTime.now();
+      final today    = DateTime(now.year, now.month, now.day);
       final eventDay = DateTime(dt.year, dt.month, dt.day);
-      final diff = eventDay.difference(today).inDays;
-      final time = '${dt.hour.toString().padLeft(2, '0')}h${dt.minute.toString().padLeft(2, '0')}';
+      final diff     = eventDay.difference(today).inDays;
+      final time     = '${dt.hour.toString().padLeft(2, '0')}h${dt.minute.toString().padLeft(2, '0')}';
       if (diff == 0) return "Aujourd'hui • $time";
       if (diff == 1) return 'Demain • $time';
       return '${dt.day} ${months[dt.month - 1]} • $time';
     } catch (_) {
-      return raw;
+      return raw; // retourne la valeur brute en cas d'échec de parsing
     }
   }
 
+  /// Couleur du badge de statut selon l'état de l'événement.
   Color get _statusColor {
     switch (event.status) {
-      case 'full': return Colors.orange;
-      case 'done': return _kGray;
+      case 'full':      return Colors.orange;
+      case 'done':      return _kGray;
       case 'cancelled': return Colors.redAccent;
-      default: return _kLime;
+      default:          return _kLime; // 'open'
     }
   }
 
+  /// Libellé français du statut de l'événement.
   String get _statusLabel {
     switch (event.status) {
-      case 'open': return 'Ouvert';
-      case 'full': return 'Complet';
-      case 'done': return 'Terminé';
+      case 'open':      return 'Ouvert';
+      case 'full':      return 'Complet';
+      case 'done':      return 'Terminé';
       case 'cancelled': return 'Annulé';
-      default: return event.status;
+      default:          return event.status;
     }
   }
 
@@ -432,6 +485,7 @@ class _EventHeader extends StatelessWidget {
         children: [
           Row(
             children: [
+              // Badge coloré indiquant le statut du match
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -475,6 +529,7 @@ class _EventHeader extends StatelessWidget {
               ],
             ),
           ],
+          // Description optionnelle séparée par un divider
           if (event.description != null && event.description!.isNotEmpty) ...[
             const SizedBox(height: 10),
             const Divider(color: _kBorder, height: 1),
@@ -489,6 +544,10 @@ class _EventHeader extends StatelessWidget {
 
 // ─── Organizer controls ──────────────────────────────────────────────────────
 
+/// Barre de contrôles visible uniquement par l'organisateur du match.
+/// Deux états :
+/// - Mode normal  → boutons "Tirer au sort" et "Modifier".
+/// - Mode édition → boutons "Annuler" et "Enregistrer".
 class _OrganizerControls extends StatelessWidget {
   final bool editMode;
   final bool saving;
@@ -508,6 +567,7 @@ class _OrganizerControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Mode édition actif : afficher Annuler + Enregistrer
     if (editMode) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -527,8 +587,7 @@ class _OrganizerControls extends StatelessWidget {
               decoration: BoxDecoration(color: _kLime, borderRadius: BorderRadius.circular(20)),
               child: saving
                   ? const SizedBox(
-                      width: 14,
-                      height: 14,
+                      width: 14, height: 14,
                       child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF0D0D16)))
                   : const Text('Enregistrer',
                       style: TextStyle(
@@ -539,6 +598,7 @@ class _OrganizerControls extends StatelessWidget {
       );
     }
 
+    // Mode normal : afficher Tirer au sort + Modifier
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -553,8 +613,7 @@ class _OrganizerControls extends StatelessWidget {
             ),
             child: saving
                 ? const SizedBox(
-                    width: 14,
-                    height: 14,
+                    width: 14, height: 14,
                     child: CircularProgressIndicator(strokeWidth: 2, color: _kLime))
                 : const Row(
                     mainAxisSize: MainAxisSize.min,
@@ -593,12 +652,15 @@ class _OrganizerControls extends StatelessWidget {
 
 // ─── Team column ─────────────────────────────────────────────────────────────
 
+/// Colonne représentant une équipe dans la composition.
+/// Affiche les joueurs assignés puis des slots vides jusqu'à [teamSize].
+/// En mode édition, chaque joueur est cliquable pour être réassigné.
 class _TeamColumn extends StatelessWidget {
-  final int teamNum;
-  final List<Participant> players;
-  final int teamSize;
+  final int teamNum;             // 1 ou 2
+  final List<Participant> players; // joueurs déjà assignés à cette équipe
+  final int teamSize;            // nombre de joueurs attendus par équipe
   final bool editMode;
-  final void Function(Participant)? onTap;
+  final void Function(Participant)? onTap; // null si pas en mode édition
 
   const _TeamColumn({
     required this.teamNum,
@@ -613,6 +675,7 @@ class _TeamColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Nombre de slots vides restants (clampé à 0 pour éviter les valeurs négatives)
     final emptySlots = (teamSize - players.length).clamp(0, teamSize);
     return Container(
       decoration: BoxDecoration(
@@ -622,6 +685,7 @@ class _TeamColumn extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // En-tête coloré avec nom de l'équipe et compteur (ex: Équipe 1  3/5)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 9),
@@ -636,11 +700,13 @@ class _TeamColumn extends StatelessWidget {
               ),
             ),
           ),
+          // Joueurs assignés
           ...players.map((p) => _PlayerTile(
                 participant: p,
                 editMode: editMode,
                 onTap: onTap != null ? () => onTap!(p) : null,
               )),
+          // Slots libres jusqu'à la capacité maximale de l'équipe
           ...List.generate(emptySlots, (_) => _EmptySlot(color: _color)),
         ],
       ),
@@ -650,6 +716,9 @@ class _TeamColumn extends StatelessWidget {
 
 // ─── Player tile ─────────────────────────────────────────────────────────────
 
+/// Tuile représentant un joueur dans une colonne d'équipe.
+/// Affiche avatar miniature, pseudo et poste.
+/// En mode édition, une icône d'échange est visible et la tuile est cliquable.
 class _PlayerTile extends StatelessWidget {
   final Participant participant;
   final bool editMode;
@@ -657,13 +726,14 @@ class _PlayerTile extends StatelessWidget {
 
   const _PlayerTile({required this.participant, required this.editMode, this.onTap});
 
+  /// Convertit la valeur technique du poste en libellé français.
   String _posLabel(String p) {
     switch (p) {
       case 'goalkeeper': return 'Gardien';
-      case 'defender': return 'Défenseur';
+      case 'defender':   return 'Défenseur';
       case 'midfielder': return 'Milieu';
-      case 'forward': return 'Attaquant';
-      default: return p;
+      case 'forward':    return 'Attaquant';
+      default:           return p;
     }
   }
 
@@ -702,6 +772,8 @@ class _PlayerTile extends StatelessWidget {
 
 // ─── Empty slot ───────────────────────────────────────────────────────────────
 
+/// Slot vide dans une colonne d'équipe, indiquant une place disponible.
+/// La couleur est celle de l'équipe concernée (bleu ou orange).
 class _EmptySlot extends StatelessWidget {
   final Color color;
   const _EmptySlot({required this.color});
@@ -713,8 +785,7 @@ class _EmptySlot extends StatelessWidget {
       child: Row(
         children: [
           Container(
-            width: 28,
-            height: 28,
+            width: 28, height: 28,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               border: Border.all(color: color.withValues(alpha: 0.25), width: 1.5),
@@ -731,6 +802,8 @@ class _EmptySlot extends StatelessWidget {
 
 // ─── Mini avatar ─────────────────────────────────────────────────────────────
 
+/// Avatar circulaire 28×28 px d'un participant.
+/// Affiche l'image réseau si disponible, sinon la première lettre du pseudo.
 class _MiniAvatar extends StatelessWidget {
   final Participant participant;
   const _MiniAvatar({required this.participant});
@@ -742,19 +815,17 @@ class _MiniAvatar extends StatelessWidget {
       return ClipOval(
         child: Image.network(
           '$_base$url',
-          width: 28,
-          height: 28,
-          fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _initials(),
+          width: 28, height: 28, fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _initials(), // fallback en cas d'erreur réseau
         ),
       );
     }
     return _initials();
   }
 
+  /// Cercle avec l'initiale du pseudo en majuscule.
   Widget _initials() => Container(
-        width: 28,
-        height: 28,
+        width: 28, height: 28,
         decoration: const BoxDecoration(shape: BoxShape.circle, color: Color(0xFF2A2A40)),
         child: Center(
           child: Text(
@@ -767,6 +838,9 @@ class _MiniAvatar extends StatelessWidget {
 
 // ─── Player chip (unassigned) ─────────────────────────────────────────────────
 
+/// Chip compact pour afficher un joueur non encore assigné à une équipe.
+/// En mode édition, la bordure devient verte et une icône "+" est visible
+/// pour indiquer que le joueur est cliquable et assignable.
 class _PlayerChip extends StatelessWidget {
   final Participant participant;
   final bool editMode;
@@ -783,8 +857,8 @@ class _PlayerChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: const Color(0xFF1A1A2A),
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: editMode ? _kLime.withValues(alpha: 0.4) : _kBorder),
+          // Bordure verte en mode édition pour signaler l'interactivité
+          border: Border.all(color: editMode ? _kLime.withValues(alpha: 0.4) : _kBorder),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -806,10 +880,12 @@ class _PlayerChip extends StatelessWidget {
 
 // ─── Assign bottom sheet ──────────────────────────────────────────────────────
 
+/// Bottom sheet permettant à l'organisateur d'assigner un joueur à une équipe.
+/// Propose : Équipe 1, Équipe 2, et "Retirer" si le joueur est déjà assigné.
 class _AssignSheet extends StatelessWidget {
   final Participant participant;
-  final int? currentTeam;
-  final void Function(int? team) onAssign;
+  final int? currentTeam; // équipe actuelle du joueur (null si non assigné)
+  final void Function(int? team) onAssign; // null = retirer de toute équipe
 
   const _AssignSheet({
     required this.participant,
@@ -825,30 +901,17 @@ class _AssignSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Nom du joueur en titre du sheet
           Text(participant.pseudo,
               style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w700)),
           const SizedBox(height: 16),
-          _SheetOption(
-            label: 'Équipe 1',
-            color: _kTeam1,
-            selected: currentTeam == 1,
-            onTap: () => onAssign(1),
-          ),
+          _SheetOption(label: 'Équipe 1', color: _kTeam1, selected: currentTeam == 1, onTap: () => onAssign(1)),
           const SizedBox(height: 8),
-          _SheetOption(
-            label: 'Équipe 2',
-            color: _kTeam2,
-            selected: currentTeam == 2,
-            onTap: () => onAssign(2),
-          ),
+          _SheetOption(label: 'Équipe 2', color: _kTeam2, selected: currentTeam == 2, onTap: () => onAssign(2)),
+          // Option "Retirer" uniquement si le joueur est déjà dans une équipe
           if (currentTeam != null) ...[
             const SizedBox(height: 8),
-            _SheetOption(
-              label: 'Retirer',
-              color: _kGray,
-              selected: false,
-              onTap: () => onAssign(null),
-            ),
+            _SheetOption(label: 'Retirer', color: _kGray, selected: false, onTap: () => onAssign(null)),
           ],
         ],
       ),
@@ -856,6 +919,8 @@ class _AssignSheet extends StatelessWidget {
   }
 }
 
+/// Option sélectionnable dans le bottom sheet d'assignation.
+/// Affiche un point coloré, le libellé, et une coche si l'option est sélectionnée.
 class _SheetOption extends StatelessWidget {
   final String label;
   final Color color;
@@ -876,20 +941,16 @@ class _SheetOption extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
+          // Fond légèrement coloré si l'option est sélectionnée
           color: selected ? color.withValues(alpha: 0.15) : const Color(0xFF1A1A2A),
           borderRadius: BorderRadius.circular(10),
           border: Border.all(color: selected ? color : _kBorder),
         ),
         child: Row(
           children: [
-            Container(
-                width: 10,
-                height: 10,
-                decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+            Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
             const SizedBox(width: 12),
-            Text(label,
-                style: TextStyle(
-                    color: selected ? color : Colors.white, fontWeight: FontWeight.w600)),
+            Text(label, style: TextStyle(color: selected ? color : Colors.white, fontWeight: FontWeight.w600)),
             if (selected) ...[
               const Spacer(),
               Icon(Icons.check_rounded, color: color, size: 18),
@@ -903,6 +964,8 @@ class _SheetOption extends StatelessWidget {
 
 // ─── Chat placeholder ─────────────────────────────────────────────────────────
 
+/// Section chat verrouillée — fonctionnalité à implémenter ultérieurement.
+/// Affiche un cadenas et un message informatif pour indiquer que le chat est à venir.
 class _ChatPlaceholder extends StatelessWidget {
   const _ChatPlaceholder();
 
@@ -915,18 +978,18 @@ class _ChatPlaceholder extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _kBorder),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Icon(Icons.chat_bubble_outline_rounded, color: _kLime, size: 18),
               SizedBox(width: 8),
               Text('Chat', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
             ],
           ),
-          const SizedBox(height: 20),
-          const Center(
+          SizedBox(height: 20),
+          Center(
             child: Column(
               children: [
                 Icon(Icons.lock_outline_rounded, color: _kGray, size: 32),
@@ -939,7 +1002,7 @@ class _ChatPlaceholder extends StatelessWidget {
               ],
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: 4),
         ],
       ),
     );
