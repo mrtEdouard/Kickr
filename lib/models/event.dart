@@ -15,6 +15,7 @@ class Event {
   final String joinMode;
   final bool isPublic;
   final String status;
+  final String? imageUrl;
 
   const Event({
     required this.id,
@@ -33,6 +34,7 @@ class Event {
     required this.joinMode,
     required this.isPublic,
     required this.status,
+    this.imageUrl,
   });
 
   factory Event.fromJson(Map<String, dynamic> json) => Event(
@@ -52,5 +54,6 @@ class Event {
         joinMode: json['join_mode'] as String,
         isPublic: json['is_public'] == 1,
         status: json['status'] as String,
+        imageUrl: json['image_url'] as String?,
       );
 }

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/auth_provider.dart';
 import '../providers/event_provider.dart';
 import '../models/event.dart';
-import 'event_detail_screen.dart';
+import 'event_preview_screen.dart';
 
 const _kLime   = Color(0xFFAAFF00);
 const _kBg     = Color(0xFF0D0D16);
@@ -139,15 +138,10 @@ class _EventTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: () {
-        if (!context.read<AuthProvider>().isLoggedIn) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Connecte-toi pour voir les détails du match.')),
-          );
-          return;
-        }
-        Navigator.push(context, MaterialPageRoute(builder: (_) => EventDetailScreen(event: event)));
-      },
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => EventPreviewScreen(event: event)),
+      ),
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(

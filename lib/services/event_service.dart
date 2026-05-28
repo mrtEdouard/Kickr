@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 import '../models/event.dart';
 import '../models/participant.dart';
@@ -171,5 +172,23 @@ class EventService {
     if (body.containsKey('error')) throw EventException(body['error'] as String);
     final raw = body['composition'] as Map<String, dynamic>;
     return raw.map((k, v) => MapEntry(int.parse(k), (v as num).toInt()));
+  }
+
+  /// Upload ou remplace la photo de couverture de l'événement.
+  /// Retourne l'URL relative de l'image stockée sur le serveur.
+  /// Endpoint : POST /events/:id/image (token JWT requis, organisateur uniquement).
+  Future<String> uploadEventImage(int eventId, File imageFile) async {
+    final token = await AuthService().getToken();
+    if (token == null) throw const EventException('Non connecté.');
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_base/events/$eventId/image'),
+    )
+      ..headers['Authorization'] = 'Bearer $token'
+      ..files.add(await http.MultipartFile.fromPath('image', imageFile.path));
+    final streamed = await request.send().timeout(const Duration(seconds: 30));
+    final body = jsonDecode(await streamed.stream.bytesToString()) as Map<String, dynamic>;
+    if (body.containsKey('error')) throw EventException(body['error'] as String);
+    return body['image_url'] as String;
   }
 }

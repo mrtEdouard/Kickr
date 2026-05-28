@@ -1,7 +1,22 @@
 'use strict';
 const express = require('express');
+const multer  = require('multer');
+const path    = require('path');
+const fs      = require('fs');
 const { getDb } = require('../db/database');
 const { requireAuth } = require('../middleware/authMiddleware');
+
+const uploadsDir = path.join(__dirname, '..', 'uploads', 'events');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (req, _file, cb) => cb(null, `event-${req.params.id}-${Date.now()}.jpg`),
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+});
 
 const router = express.Router();
 
@@ -262,6 +277,35 @@ router.post('/:id/composition/random', requireAuth, (req, res) => {
     return res.json({ composition });
   } catch (err) {
     console.error('random composition error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+/**
+ * POST /events/:id/image
+ * Upload ou remplacement de la photo de couverture de l'événement.
+ * Réservé à l'organisateur. Champ multipart : "image".
+ */
+router.post('/:id/image', requireAuth, upload.single('image'), (req, res) => {
+  try {
+    const db = getDb();
+    const eventId = Number(req.params.id);
+    const event = db.prepare('SELECT creator_id, image_url FROM events WHERE id = ?').get(eventId);
+    if (!event) return res.status(404).json({ error: 'Événement introuvable.' });
+    if (event.creator_id !== req.userId) return res.status(403).json({ error: 'Non autorisé.' });
+    if (!req.file) return res.status(400).json({ error: 'Aucune image fournie.' });
+
+    // Supprime l'ancienne image si elle existe
+    if (event.image_url) {
+      const old = path.join(__dirname, '..', event.image_url.replace(/^\//, ''));
+      if (fs.existsSync(old)) fs.unlinkSync(old);
+    }
+
+    const imageUrl = `/uploads/events/${req.file.filename}`;
+    db.prepare('UPDATE events SET image_url = ? WHERE id = ?').run(imageUrl, eventId);
+    return res.json({ image_url: imageUrl });
+  } catch (err) {
+    console.error('upload event image error:', err);
     return res.status(500).json({ error: 'Une erreur est survenue.' });
   }
 });

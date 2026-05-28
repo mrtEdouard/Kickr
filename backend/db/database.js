@@ -79,8 +79,9 @@ function initDb() {
       UNIQUE(event_id, user_id)
     );
   `);
-  // Migration : colonne nationality absente des DBs créées avant cette version
   try { db.exec('ALTER TABLE users ADD COLUMN nationality TEXT'); } catch (_) {}
+  // Migration : photo de couverture de l'événement
+  try { db.exec('ALTER TABLE events ADD COLUMN image_url TEXT'); } catch (_) {}
 
   console.log('Database initialized at', DB_PATH);
 }
