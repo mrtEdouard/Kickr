@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../models/event.dart';
+import '../models/message.dart';
 import '../models/participant.dart';
 import '../models/pending_request.dart';
+import '../services/chat_service.dart';
 import '../services/event_service.dart';
 
 // ─── Palette de couleurs partagée dans cet écran ─────────────────────────────
@@ -380,8 +382,10 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ],
 
                     const SizedBox(height: 24),
-                    // Section chat (fonctionnalité à développer ultérieurement)
-                    _ChatPlaceholder(),
+                    _ChatSection(
+                      eventId: widget.event.id,
+                      currentUserId: currentUserId ?? 0,
+                    ),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -1076,51 +1080,343 @@ class _SheetOption extends StatelessWidget {
   }
 }
 
-// ─── Chat placeholder ─────────────────────────────────────────────────────────
+// ─── Chat ─────────────────────────────────────────────────────────────────────
 
-/// Section chat verrouillée — fonctionnalité à implémenter ultérieurement.
-/// Affiche un cadenas et un message informatif pour indiquer que le chat est à venir.
-class _ChatPlaceholder extends StatelessWidget {
-  const _ChatPlaceholder();
+class _ChatSection extends StatefulWidget {
+  final int eventId;
+  final int currentUserId;
+  const _ChatSection({required this.eventId, required this.currentUserId});
+
+  @override
+  State<_ChatSection> createState() => _ChatSectionState();
+}
+
+class _ChatSectionState extends State<_ChatSection> {
+  final _service    = ChatService();
+  final _ctrl       = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  List<Message> _messages = [];
+  bool _loading = true;
+  bool _sending = false;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // Polling toutes les 5 secondes pour les nouveaux messages
+    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _poll());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _ctrl.dispose();
+    _scrollCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final msgs = await _service.getMessages(widget.eventId);
+      if (!mounted) return;
+      setState(() { _messages = msgs; _loading = false; });
+      _scrollToBottom();
+    } catch (_) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _poll() async {
+    try {
+      final msgs = await _service.getMessages(widget.eventId);
+      if (!mounted) return;
+      if (msgs.length != _messages.length) {
+        setState(() => _messages = msgs);
+        _scrollToBottom();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _send() async {
+    final text = _ctrl.text.trim();
+    if (text.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    _ctrl.clear();
+    try {
+      final msg = await _service.sendMessage(widget.eventId, text);
+      if (!mounted) return;
+      setState(() { _messages.add(msg); _sending = false; });
+      _scrollToBottom();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() { _sending = false; _ctrl.text = text; });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString()), backgroundColor: Colors.redAccent),
+      );
+    }
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.animateTo(
+          _scrollCtrl.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  String _timeLabel(DateTime dt) {
+    final now  = DateTime.now();
+    final diff = now.difference(dt);
+    final time = '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
+    if (diff.inDays == 0) return time;
+    if (diff.inDays == 1) return 'Hier $time';
+    return '${dt.day}/${dt.month} $time';
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: _kCard,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: _kBorder),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.chat_bubble_outline_rounded, color: _kLime, size: 18),
-              SizedBox(width: 8),
-              Text('Chat', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-            ],
-          ),
-          SizedBox(height: 20),
-          Center(
-            child: Column(
+          // ── En-tête ──────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: Row(
               children: [
-                Icon(Icons.lock_outline_rounded, color: _kGray, size: 32),
-                SizedBox(height: 8),
-                Text('À venir',
-                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600)),
-                SizedBox(height: 4),
-                Text('Le chat sera disponible prochainement.',
-                    style: TextStyle(color: _kGray, fontSize: 12)),
+                const Icon(Icons.chat_bubble_outline_rounded, color: _kLime, size: 17),
+                const SizedBox(width: 8),
+                const Text('Chat', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                Text('${_messages.length} message${_messages.length != 1 ? 's' : ''}',
+                    style: const TextStyle(color: _kGray, fontSize: 12)),
               ],
             ),
           ),
-          SizedBox(height: 4),
+          const Divider(height: 1, color: _kBorder),
+
+          // ── Liste des messages ────────────────────────────────
+          SizedBox(
+            height: 320,
+            child: _loading
+                ? const Center(child: CircularProgressIndicator(color: _kLime, strokeWidth: 2))
+                : _messages.isEmpty
+                    ? const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.chat_bubble_outline_rounded, color: _kBorder, size: 36),
+                            SizedBox(height: 10),
+                            Text('Aucun message pour l\'instant.',
+                                style: TextStyle(color: _kGray, fontSize: 13)),
+                            Text('Sois le premier à écrire !',
+                                style: TextStyle(color: _kBorder, fontSize: 12)),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        controller: _scrollCtrl,
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                        itemCount: _messages.length,
+                        itemBuilder: (_, i) {
+                          final msg   = _messages[i];
+                          final isMe  = msg.userId == widget.currentUserId;
+                          final showHeader = i == 0 || _messages[i - 1].userId != msg.userId;
+                          return _Bubble(
+                            msg: msg,
+                            isMe: isMe,
+                            showHeader: showHeader,
+                            timeLabel: _timeLabel(msg.createdAt),
+                          );
+                        },
+                      ),
+          ),
+
+          // ── Saisie ────────────────────────────────────────────
+          const Divider(height: 1, color: _kBorder),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    style: const TextStyle(color: Colors.white, fontSize: 14),
+                    maxLines: null,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _send(),
+                    decoration: InputDecoration(
+                      hintText: 'Envoie un message…',
+                      hintStyle: const TextStyle(color: _kGray, fontSize: 14),
+                      filled: true,
+                      fillColor: const Color(0xFF0D0D16),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: _kBorder),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: _kBorder),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: _kLime, width: 1.5),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: _send,
+                  child: Container(
+                    width: 42, height: 42,
+                    decoration: BoxDecoration(
+                      color: _kLime,
+                      borderRadius: BorderRadius.circular(21),
+                    ),
+                    child: _sending
+                        ? const Padding(
+                            padding: EdgeInsets.all(11),
+                            child: CircularProgressIndicator(color: _kBg, strokeWidth: 2),
+                          )
+                        : const Icon(Icons.send_rounded, color: _kBg, size: 18),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
+}
+
+// ─── Bulle de message ─────────────────────────────────────────────────────────
+
+class _Bubble extends StatelessWidget {
+  final Message msg;
+  final bool isMe;
+  final bool showHeader;
+  final String timeLabel;
+  const _Bubble({required this.msg, required this.isMe, required this.showHeader, required this.timeLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(
+        bottom: 6,
+        top: showHeader && !isMe ? 8 : 2,
+      ),
+      child: Column(
+        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+        children: [
+          // Pseudo + avatar pour les autres (affiché une fois par groupe)
+          if (!isMe && showHeader)
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _MsgAvatar(pseudo: msg.pseudo, avatarUrl: msg.avatarUrl, size: 20),
+                  const SizedBox(width: 6),
+                  Text(msg.pseudo,
+                      style: const TextStyle(color: _kGray, fontSize: 11, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+
+          Row(
+            mainAxisAlignment: isMe ? MainAxisAlignment.end : MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              // Avatar gauche pour les autres (espace quand même si pas showHeader)
+              if (!isMe) SizedBox(width: 26, child: showHeader ? null : null),
+
+              Flexible(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isMe ? _kLime : const Color(0xFF1E1E2E),
+                    borderRadius: BorderRadius.only(
+                      topLeft:     const Radius.circular(16),
+                      topRight:    const Radius.circular(16),
+                      bottomLeft:  Radius.circular(isMe ? 16 : 4),
+                      bottomRight: Radius.circular(isMe ? 4 : 16),
+                    ),
+                    border: isMe ? null : Border.all(color: _kBorder),
+                  ),
+                  child: Text(
+                    msg.content,
+                    style: TextStyle(
+                      color: isMe ? _kBg : Colors.white,
+                      fontSize: 14,
+                      height: 1.4,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          // Horodatage
+          Padding(
+            padding: EdgeInsets.only(
+              top: 3,
+              left: isMe ? 0 : 30,
+              right: 4,
+            ),
+            child: Text(timeLabel,
+                style: const TextStyle(color: _kGray, fontSize: 10)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MsgAvatar extends StatelessWidget {
+  final String pseudo;
+  final String? avatarUrl;
+  final double size;
+  const _MsgAvatar({required this.pseudo, this.avatarUrl, required this.size});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size, height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0xFF2A2A3A),
+        border: Border.all(color: _kBorder),
+      ),
+      child: avatarUrl != null
+          ? ClipOval(child: Image.network('$_base$avatarUrl', fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _Initial(pseudo, size)))
+          : _Initial(pseudo, size),
+    );
+  }
+}
+
+class _Initial extends StatelessWidget {
+  final String pseudo;
+  final double size;
+  const _Initial(this.pseudo, this.size);
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Text(pseudo.substring(0, 1).toUpperCase(),
+        style: TextStyle(color: _kLime, fontSize: size * 0.5, fontWeight: FontWeight.w800)),
+  );
 }
 
 // ─── Demandes en attente ──────────────────────────────────────────────────────

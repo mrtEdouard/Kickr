@@ -468,6 +468,73 @@ router.patch('/:id/requests/:userId', requireAuth, (req, res) => {
   }
 });
 
+/**
+ * GET /events/:id/messages
+ * Retourne les 100 derniers messages du chat de l'événement.
+ * Réservé aux participants confirmés — accès refusé sinon (403).
+ */
+router.get('/:id/messages', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId = Number(req.params.id);
+    const participation = db.prepare(
+      "SELECT id FROM event_participants WHERE event_id = ? AND user_id = ? AND status = 'confirmed'"
+    ).get(eventId, req.userId);
+    if (!participation) return res.status(403).json({ error: 'Réservé aux participants de cet événement.' });
+
+    const messages = db.prepare(`
+      SELECT m.id, m.event_id, m.user_id, m.content, m.created_at,
+             u.pseudo, u.avatar_url
+      FROM messages m
+      JOIN users u ON m.user_id = u.id
+      WHERE m.event_id = ?
+      ORDER BY m.created_at ASC
+      LIMIT 100
+    `).all(eventId);
+    return res.json({ messages });
+  } catch (err) {
+    console.error('get messages error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
+/**
+ * POST /events/:id/messages
+ * Envoie un message dans le chat de l'événement.
+ * Réservé aux participants confirmés. Limite : 500 caractères.
+ */
+router.post('/:id/messages', requireAuth, (req, res) => {
+  try {
+    const db = getDb();
+    const eventId = Number(req.params.id);
+    const content = (req.body?.content ?? '').trim();
+
+    if (!content) return res.status(400).json({ error: 'Le message ne peut pas être vide.' });
+    if (content.length > 500) return res.status(400).json({ error: 'Message trop long (500 caractères max).' });
+
+    const participation = db.prepare(
+      "SELECT id FROM event_participants WHERE event_id = ? AND user_id = ? AND status = 'confirmed'"
+    ).get(eventId, req.userId);
+    if (!participation) return res.status(403).json({ error: 'Réservé aux participants de cet événement.' });
+
+    const { lastInsertRowid } = db.prepare(
+      'INSERT INTO messages (event_id, user_id, content) VALUES (?, ?, ?)'
+    ).run(eventId, req.userId, content);
+
+    const message = db.prepare(`
+      SELECT m.id, m.event_id, m.user_id, m.content, m.created_at,
+             u.pseudo, u.avatar_url
+      FROM messages m
+      JOIN users u ON m.user_id = u.id
+      WHERE m.id = ?
+    `).get(Number(lastInsertRowid));
+    return res.status(201).json({ message });
+  } catch (err) {
+    console.error('send message error:', err);
+    return res.status(500).json({ error: 'Une erreur est survenue.' });
+  }
+});
+
 // Détail d'un événement
 router.get('/:id', (req, res) => {
   try {

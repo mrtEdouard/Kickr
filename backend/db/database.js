@@ -91,6 +91,15 @@ function initDb() {
       created_at TEXT    NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_notif_user ON notifications(user_id, is_read);
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_id   INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content    TEXT    NOT NULL,
+      created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_messages_event ON messages(event_id, created_at);
   `);
 
   try { db.exec('ALTER TABLE users ADD COLUMN nationality TEXT'); } catch (_) {}
